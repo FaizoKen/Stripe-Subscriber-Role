@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stripe Subscriber Role</title>
+<link rel="icon" href="__BASE_URL__/favicon.ico">
+<style>
+  :root { color-scheme: dark; --brand:#635bff; --brand2:#0a2540; --ok:#3ecf8e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0f1115; color:#e8eaed;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    font-size:14px; line-height:1.5; padding:24px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:#8a93a4; font-size:13px; margin:0 0 22px; }
+  .q { font-weight:700; font-size:14px; margin:0 0 9px; }
+  .opts { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:7px; margin-bottom:10px; }
+  .opt { display:flex; gap:8px; align-items:flex-start; border:1px solid #262b36; border-radius:8px;
+    padding:8px 10px; cursor:pointer; background:#14171f; transition:border-color .1s; }
+  .opt:hover { border-color:#3a4150; }
+  .opt.sel { border-color:var(--brand); background:#16162b; }
+  .opt input { margin:1px 0 0; accent-color:var(--brand); flex:none; }
+  .opt .t { font-weight:600; font-size:12.5px; line-height:1.25; }
+  .opt .d { color:#8a93a4; font-size:11px; line-height:1.3; margin-top:1px; }
+  .extra { margin:0 0 6px; }
+  .inline { color:#cfd6e4; font-size:13px; padding:9px 11px; border:1px solid #262b36;
+    border-radius:8px; background:#14171f; }
+  .inline input, .inline select { background:#0b0d12; color:#e8eaed; border:1px solid #2a2f3a;
+    border-radius:6px; padding:5px 7px; font-size:13px; }
+  .blk { margin:22px 0; }
+  .blk label.h { display:block; font-weight:700; margin:0 0 8px; }
+  select, input[type=text], input[type=number], input[type=password] { background:#0b0d12; color:#e8eaed;
+    border:1px solid #2a2f3a; border-radius:6px; padding:8px 10px; font-size:13px; }
+  select:focus, input:focus { outline:1px solid var(--brand); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#262b36; color:#e8eaed; border:0; border-radius:7px; padding:8px 13px;
+    font-size:13px; font-weight:600; cursor:pointer; }
+  button:hover { background:#313845; }
+  button.primary { background:var(--brand); color:#fff; padding:11px 22px; font-size:14px; }
+  button.primary:hover { background:#544cff; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.x { background:none; color:#8a93a4; padding:4px 6px; }
+  button.x:hover { color:#fca5a5; }
+  .connectcta { border:1px dashed #3a4150; border-radius:10px; padding:16px; background:#13161e; }
+  .connectcta p { color:#9aa3b2; margin:4px 0 12px; font-size:13px; }
+  .field { margin:8px 0; }
+  .field label { display:block; color:#aeb6c4; font-size:12px; margin-bottom:4px; }
+  .field input { width:100%; }
+  .hintmini { color:#7a8497; font-size:11px; margin-top:3px; }
+  .acct { background:#13161e; border:1px solid #2a2f3a; border-radius:10px; padding:12px 14px; }
+  .acct b { color:#e8eaed; }
+  .badge { font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:10px; vertical-align:middle; }
+  .badge.live { background:#10331f; color:var(--ok); }
+  .badge.test { background:#3a2c10; color:#fbbf24; }
+  .wh { background:#101826; border:1px solid #1f3346; border-radius:10px; padding:12px 14px; margin-top:10px;
+    font-size:12.5px; color:#a9c3d8; }
+  .wh b { color:#dbeafe; }
+  .copybox { display:flex; gap:8px; margin-top:8px; align-items:stretch; }
+  .copybox code { flex:1; min-width:0; background:#0b0d12; border:1px solid #234; border-radius:6px;
+    padding:8px 10px; font-size:12px; overflow:auto; white-space:nowrap; }
+  ul.events { margin:8px 0 0; padding-left:18px; columns:2; font-size:12px; color:#8fb0c9; }
+  .share { background:#16162b; border:1px solid #2b2b52; border-radius:10px; padding:13px 15px;
+    margin:20px 0; font-size:13px; color:#bdbfe8; }
+  .share b { color:#e3e3ff; }
+  .adv { margin:6px 0 0; }
+  .grp { border:1px solid #2a2f3a; border-radius:9px; padding:11px; margin:8px 0; background:#13161e; }
+  .grp-h { display:flex; justify-content:space-between; color:#8a93a4; font-size:12px; margin-bottom:6px; }
+  .or { text-align:center; color:#7a8497; font-weight:700; font-size:11px; letter-spacing:.08em; margin:4px 0; }
+  .cond { display:flex; gap:7px; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #20242e; }
+  .cond:last-of-type { border-bottom:0; }
+  .cond .vw { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .pfx { color:#7a8497; }
+  .hint { color:#7a8497; font-size:11px; flex-basis:100%; margin-left:2px; }
+  .foot { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap;
+    margin-top:26px; padding-top:16px; border-top:1px solid #232734; }
+  .foot-btns { display:flex; gap:10px; align-items:center; margin-left:auto; }
+  .count { color:#8a93a4; font-size:12.5px; }
+  .count .ok { color:var(--ok); font-weight:600; }
+  .toast { padding:10px 12px; border-radius:8px; font-size:13px; margin-top:12px; }
+  .toast.e { background:#2a1518; border:1px solid #5c2630; color:#f6b8c0; }
+  .hidden { display:none !important; }
+  @media (max-width: 560px) {
+    body { padding:16px 14px; }
+    .opts { grid-template-columns:1fr; }
+    .row > select, .cond > select, .cond > .vw { flex:1 1 100%; min-width:0; }
+    ul.events { columns:1; }
+    .foot-btns { width:100%; } .foot-btns > button { flex:1 1 0; }
+  }
+  .guide { background:#0e1422; border:1px solid #22304a; border-radius:9px; padding:10px 12px; margin:0 0 12px; font-size:12.5px; }
+  .guide summary { cursor:pointer; font-weight:700; color:#dbeafe; list-style:none; }
+  .guide summary::-webkit-details-marker { display:none; }
+  .guide summary::before { content:'▸ '; color:#7a8497; }
+  .guide[open] summary::before { content:'▾ '; }
+  .guide ol { margin:8px 0 2px; padding-left:20px; color:#aeb6c4; }
+  .guide ol li { margin:4px 0; line-height:1.45; }
+  .guide a { color:#8a9bff; font-weight:600; }
+</style>
+</head>
+<body>
+<div id="app"><p class="sub">Loading…</p></div>
+
+<script>
+const BASE_URL="__BASE_URL__", GUILD_ID="__GUILD_ID__", ROLE_ID="__ROLE_ID__";
+const IFRAME_TOKEN="__IFRAME_TOKEN__", IS_EMBEDDED=!!IFRAME_TOKEN;
+
+function postToHost(m){ if(!IS_EMBEDDED) return; try{ parent.postMessage(m,'*'); }catch(_){} }
+function postHeight(){ postToHost({type:'rl:resize',height:Math.max(
+  document.documentElement.scrollHeight,document.body.scrollHeight)}); }
+const postDirty=d=>postToHost({type:'rl:dirty',dirty:!!d});
+const postSaved=()=>postToHost({type:'rl:saved'});
+const postToast=(m,k)=>postToHost({type:'rl:toast',message:String(m||''),kind:k||'error'});
+if(IS_EMBEDDED&&'ResizeObserver'in window) new ResizeObserver(postHeight).observe(document.body);
+window.addEventListener('load',postHeight);
+
+function apiHeaders(x){ const h=Object.assign({'Content-Type':'application/json'},x||{});
+  if(IFRAME_TOKEN) h['Authorization']='Bearer '+IFRAME_TOKEN; return h; }
+function apiCreds(){ return IS_EMBEDDED?'omit':'include'; }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function copyText(text){
+  const fallback=()=>{ try{
+    const ta=document.createElement('textarea'); ta.value=text; ta.setAttribute('readonly','');
+    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+    ta.select(); const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok;
+  }catch(_){ return false; } };
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    return navigator.clipboard.writeText(text).then(()=>true,()=>fallback());
+  return Promise.resolve(fallback());
+}
+function wireCopy(btnId,text){ const b=document.getElementById(btnId); if(!b) return;
+  b.addEventListener('click',()=>{ copyText(text).then(ok=>{ b.textContent=ok?'Copied ✓':'Ctrl+C';
+    setTimeout(()=>b.textContent='Copy',1500); }); }); }
+
+let state=null, dirty=false, refreshInFlight=false;
+function setDirty(d){ dirty=d; postDirty(d); const s=document.getElementById('save'); if(s) s.disabled=!d; }
+function ruleKey(c){ return JSON.stringify({ a:c.stripe_account_ref??null, g:!!c.grant_on_any_relation,
+  r:c.grant_on_any_relation?[]:(c.groups||[]) }); }
+function recomputeDirty(){ if(!state||!state._edit||!state.config) return;
+  setDirty(ruleKey(state._edit)!==ruleKey(state.config)); }
+
+function c(t,o,v){ return {target:t,operator:o,value:v,value_end:null}; }
+function targetByKey(k){ return state.targets.find(t=>t.key===k); }
+function opByKey(k){ return state.operators.find(o=>o.key===k); }
+function opsForKind(k){ return state.operators.filter(o=>o.valid_for[k]); }
+function dollars(c){ return (Number(c||0)/100); }
+function cents(d){ const n=parseFloat(d); return isNaN(n)?0:Math.round(n*100); }
+
+/* preset id -> friendly copy + rule shape */
+function presets(){ return [
+ {id:'active', t:'Active subscribers', d:'Anyone with a live (active or trial) subscription.',
+   make:()=>({grant:false,groups:[[c('has_active_subscription','eq',true)]]})},
+ {id:'product', t:'Subscribers to a plan', d:'Pick one of your products.', picker:true,
+   make:(sel)=>({grant:false,groups:[[c('has_active_subscription','eq',true),c('subscribed_to_product','eq',sel||'')]]})},
+ {id:'trial', t:'Free-trial users', d:'Currently on a trial.',
+   make:()=>({grant:false,groups:[[c('is_trialing','eq',true)]]})},
+ {id:'annual', t:'Annual plan members', d:'Active subscription billed yearly.',
+   make:()=>({grant:false,groups:[[c('has_active_subscription','eq',true),c('billing_interval','eq','year')]]})},
+ {id:'whale', t:'Big spenders (VIP)', d:'Lifetime spend of at least $X.', amount:50,
+   make:(amt)=>({grant:false,groups:[[c('lifetime_spend','gte',cents(amt||50))]]})},
+ {id:'pastdue', t:'Past-due (win-back)', d:'Payment failed — for an “update your card” role.',
+   make:()=>({grant:false,groups:[[c('is_past_due','eq',true)]]})},
+ {id:'anyone', t:'Any customer', d:'Anyone with any customer record.',
+   make:()=>({grant:true,groups:[]})},
+ {id:'custom', t:'Advanced rule', d:'Combine conditions with AND / OR.', make:null},
+];}
+
+async function load(){
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/data`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    if(!r.ok){ const e=await r.json().catch(()=>({error:r.status}));
+      document.getElementById('app').innerHTML=`<div class="toast e">${esc(e.error||('HTTP '+r.status))}</div>`;
+      postHeight(); return; }
+    state=await r.json();
+    state._edit=JSON.parse(JSON.stringify(state.config));
+    state._catalog={};
+    state._preset=detectPreset(state._edit);
+    state._n=guessAmount(state._edit);
+    render(); prefetchCatalog(); autoPreview();
+  }catch(e){ document.getElementById('app').innerHTML=
+    `<div class="toast e">Network error: ${esc(String(e))}</div>`; }
+}
+function detectPreset(cfg){
+  if(cfg.grant_on_any_relation) return 'anyone';
+  const g=cfg.groups||[];
+  if(g.length===0) return null; // unconfigured sentinel — nothing chosen yet
+  if(g.length===1){ const cs=g[0].conditions||[];
+    const only=(t,o,v)=>cs.length===1&&cs[0].target===t&&cs[0].operator===o&&cs[0].value===v;
+    if(only('has_active_subscription','eq',true)) return 'active';
+    if(only('is_trialing','eq',true)) return 'trial';
+    if(only('is_past_due','eq',true)) return 'pastdue';
+    if(cs.length===1&&cs[0].target==='lifetime_spend'&&cs[0].operator==='gte') return 'whale';
+    if(cs.length===2&&cs[0].target==='has_active_subscription'&&cs[1].target==='subscribed_to_product'&&cs[1].operator==='eq') return 'product';
+    if(cs.length===2&&cs[0].target==='has_active_subscription'&&cs[1].target==='billing_interval'&&cs[1].value==='year') return 'annual';
+  }
+  return 'custom';
+}
+function guessAmount(cfg){ try{ const cc=cfg.groups[0].conditions.find(x=>x.target==='lifetime_spend');
+  return cc?dollars(cc.value):50; }catch(_){ return 50; } }
+
+function activeAccount(){ const a=state.accounts||[]; if(a.length===0) return null;
+  const sel=a.find(x=>String(x.id)===String(state._edit.stripe_account_ref)); return sel||a[0]; }
+
+async function getCatalog(accId){ if(!accId) return {products:[],prices:[]};
+  if(state._catalog[accId]) return state._catalog[accId];
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/accounts/${accId}/catalog`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    if(r.ok){ state._catalog[accId]=await r.json(); } else { state._catalog[accId]={products:[],prices:[]}; }
+  }catch(_){ state._catalog[accId]={products:[],prices:[]}; }
+  return state._catalog[accId]; }
+function prefetchCatalog(){ const a=activeAccount(); if(a){ getCatalog(a.id).then(()=>{ if(state._preset==='custom'||state._preset==='product') render(); }); } }
+
+function render(){
+  const cfg=state._edit, app=document.getElementById('app');
+  const accts=state.accounts||[];
+  const cur=state._preset;
+  const needsAccount = cur!==null; // every preset needs an account to evaluate
+  const acc=activeAccount();
+  if(needsAccount && acc && String(cfg.stripe_account_ref)!==String(acc.id)){
+    cfg.stripe_account_ref=acc.id; recomputeDirty(); }
+  const verifyUrl=state.verify_url||(BASE_URL+"/verify");
+
+  // preset grid
+  const opts=presets().map(p=>{
+    const on=(cur===p.id);
+    return `<label class="opt ${on?'sel':''}">
+      <input type="radio" name="who" value="${p.id}" ${on?'checked':''}>
+      <div><div class="t">${esc(p.t)}</div><div class="d">${esc(p.d)}</div></div></label>`;
+  }).join('');
+
+  // preset-specific extra controls
+  let extra='';
+  if(cur==='whale') extra=`<div class="extra"><div class="inline">Lifetime spend of at least $
+    <input type="number" id="whaleAmt" min="1" step="1" value="${esc(state._n)}"></div></div>`;
+  else if(cur==='product'){
+    if(!acc){
+      extra=`<div class="extra"><div class="inline">Connect your Stripe account below first, then pick a plan here.</div></div>`;
+    } else { const cat=state._catalog[acc.id];
+      if(!cat){ getCatalog(acc.id).then(()=>{ if(state._preset==='product') render(); });
+        extra=`<div class="extra"><div class="inline">Loading your plans…</div></div>`; }
+      else if(!cat.products||cat.products.length===0){
+        extra=`<div class="extra"><div class="inline">No active products found in this Stripe account.
+          Create a product in Stripe (or use <b>Advanced rule</b>). If your key can't read Products, add that permission and reconnect.</div></div>`; }
+      else { const sel=(cfg.groups[0]&&cfg.groups[0].conditions[1])?cfg.groups[0].conditions[1].value:'';
+        extra=`<div class="extra"><div class="inline">Plan:
+          <select id="prodSel">${cat.products.map(p=>`<option value="${esc(p.id)}" ${p.id===sel?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div></div>`; }
+    }
+  }
+  else if(cur==='custom') extra=`<div class="extra"><div class="adv" id="rule"></div></div>`;
+
+  // account block
+  let acctBlk='';
+  const showForm = accts.length===0 || state._showConnect;
+  if(showForm){
+    acctBlk=`<div class="blk"><label class="h">${accts.length===0?'Connect your Stripe account':'Connect another Stripe account'}</label>
+      <div class="connectcta">
+        <p>Paste a <b>restricted (read-only) Stripe API key</b>. We use it to read your
+           subscribers, customers and plans — nothing else. It's stored encrypted.</p>
+        <details class="guide" open>
+          <summary>How to get your key (about 1 minute)</summary>
+          <ol>
+            <li>Open <a href="https://dashboard.stripe.com/apikeys/create" target="_blank" rel="noopener noreferrer">Stripe → Create restricted key</a>. Use the <b>Live / Test</b> toggle (top-right in Stripe) to match how you charge members.</li>
+            <li>Give it a name like <code>RoleLogic</code>.</li>
+            <li>Set these permissions to <b>Read</b>, and leave everything else on <b>None</b>:
+              <b>Customers</b>, <b>Subscriptions</b>, <b>Charges</b>, <b>Products</b>, <b>Prices</b>
+              <span style="color:#7a8497">(optional: <b>Account</b> — just shows your business name).</span></li>
+            <li>Click <b>Create key</b>, then <b>Reveal</b> and copy it — it starts with
+              <code>rk_live_</code> or <code>rk_test_</code>.</li>
+            <li>Paste it below and press <b>Connect Stripe</b>.</li>
+          </ol>
+        </details>
+        <div class="field"><label>Stripe restricted key (starts with <code>rk_</code>)</label>
+          <input id="apiKey" type="password" placeholder="rk_live_…" autocomplete="off"></div>
+        <div class="field"><label>Discord-ID metadata key (advanced)</label>
+          <input id="metaKey" type="text" value="discord_user_id">
+          <div class="hintmini">The Stripe metadata field holding the buyer's Discord ID. Leave as-is if you use RoleLogic billing.</div></div>
+        <div class="hintmini" style="margin:2px 0 10px">The webhook signing secret comes <b>after</b> connecting — we'll show the exact webhook URL and a step-by-step guide, because the address is unique to this account.</div>
+        <div class="row">
+          <button class="primary" id="doConnect">Connect Stripe</button>
+          ${accts.length>0?`<button id="cancelConnect">Cancel</button>`:''}
+        </div>
+      </div></div>`;
+  } else {
+    const sel=acc;
+    const picker = accts.length>1 ? `<select id="acctSel">${accts.map(a=>`<option value="${a.id}" ${String(a.id)===String(sel.id)?'selected':''}>${esc(a.display_name)}</option>`).join('')}</select>` : '';
+    acctBlk=`<div class="blk"><label class="h">Stripe account</label>
+      <div class="acct">
+        <div class="row" style="justify-content:space-between">
+          <div><b>${esc(sel.display_name)}</b>
+            <span class="badge ${sel.livemode?'live':'test'}">${sel.livemode?'LIVE':'TEST'}</span>
+            ${sel.country?`<span style="color:#8a93a4"> · ${esc(sel.country)}</span>`:''}</div>
+          <div class="row">${picker}<button id="addAccount">Connect another</button></div>
+        </div>
+        <div class="hintmini" style="margin-top:6px">${sel.last_backfill_at?'Imported ✓':'Importing your subscribers…'}${sel.webhook_configured?' · webhook active ✓':' · no webhook yet'}</div>
+        ${webhookHelp(sel)}
+      </div></div>`;
+  }
+
+  app.innerHTML=`
+    <h1>Stripe Subscriber Role</h1>
+    <p class="sub">Give this Discord role automatically, based on a member's Stripe subscription or payments.</p>
+    <div class="q">Who should get this role?</div>
+    <div class="opts">${opts}</div>
+    ${extra}
+    ${acctBlk}
+    <div class="share"><b>How members get linked:</b> automatically. Their Discord ID travels with their
+      Stripe subscription (<code>metadata.discord_user_id</code> / checkout <code>client_reference_id</code>),
+      so there's nothing for them to do. Members can check their status here:
+      <div class="copybox"><code id="vurl">${esc(verifyUrl)}</code>
+        <a class="btn" style="text-decoration:none;display:inline-flex;align-items:center;padding:8px 13px;background:#262b36;border-radius:7px;color:#e8eaed" href="${esc(verifyUrl)}" target="_blank" rel="noopener">Open</a>
+        <button id="copyv">Copy</button></div>
+    </div>
+    <div class="foot">
+      <span class="count" id="count"></span>
+      <div class="foot-btns">
+        <button id="preview">Preview</button>
+        <button id="save" class="primary" ${dirty?'':'disabled'}>Save</button>
+      </div>
+    </div>`;
+
+  app.querySelectorAll('input[name=who]').forEach(r=>r.addEventListener('change',()=>choose(r.value)));
+  const dc=document.getElementById('doConnect'); if(dc) dc.addEventListener('click',connectAccount);
+  const aa=document.getElementById('addAccount'); if(aa) aa.addEventListener('click',()=>{ state._showConnect=true; render(); });
+  const cx=document.getElementById('cancelConnect'); if(cx) cx.addEventListener('click',()=>{ state._showConnect=false; render(); });
+  const whs=document.getElementById('whsecSave'); if(whs) whs.addEventListener('click',saveWebhookSecret);
+  const as=document.getElementById('acctSel'); if(as) as.addEventListener('change',e=>{
+    cfg.stripe_account_ref=Number(e.target.value); recomputeDirty(); getCatalog(cfg.stripe_account_ref).then(()=>render()); autoPreview(); });
+  wireCopy('copyv', verifyUrl);
+  const wa=document.getElementById('whaleAmt'); if(wa) wa.addEventListener('input',e=>{ state._n=Math.max(1,Number(e.target.value)||1); applyPreset('whale'); });
+  const ps=document.getElementById('prodSel'); if(ps) ps.addEventListener('change',()=>applyPreset('product'));
+  document.querySelectorAll('[data-copy]').forEach(b=>wireCopy(b.id, b.getAttribute('data-copy')));
+  const sv=document.getElementById('save'); if(sv) sv.addEventListener('click',doSave);
+  document.getElementById('preview').addEventListener('click',doPreviewEdit);
+  if(cur==='custom') renderRule();
+  postHeight();
+}
+
+function webhookHelp(a){
+  const events=state.webhook_events||[];
+  const evt=events.map(e=>`<li>${esc(e)}</li>`).join('');
+  return `<div class="wh">
+    <b>Turn on real-time updates (recommended)</b>
+    <details class="guide" open style="margin-top:8px;background:#0b1320">
+      <summary>How to set up the webhook &amp; get your signing secret (whsec_…)</summary>
+      <ol>
+        <li>Open <a href="https://dashboard.stripe.com/webhooks/create" target="_blank" rel="noopener noreferrer">Stripe → Add a webhook endpoint</a> (use the same <b>Live / Test</b> mode as your key).</li>
+        <li>Set <b>Endpoint URL</b> to this (copy it):
+          <div class="copybox"><code>${esc(a.webhook_url)}</code>
+            <button data-copy="${esc(a.webhook_url)}">Copy</button></div></li>
+        <li>Under <b>Select events</b>, add these ${events.length} events:
+          <ul class="events">${evt}</ul></li>
+        <li>Click <b>Add endpoint</b>. On the endpoint's page, find <b>Signing secret</b> → click <b>Reveal</b> → copy the <code>whsec_…</code> value.</li>
+        <li>Paste it here and save:
+          <div class="copybox">
+            <input id="whsecInput" type="password" placeholder="whsec_…" autocomplete="off" style="flex:1;min-width:0">
+            <button id="whsecSave" class="primary" style="padding:8px 14px">Save secret</button></div></li>
+      </ol>
+    </details>
+    <div class="hintmini">${a.webhook_configured
+      ? 'Signing secret saved ✓ — real-time updates are on.'
+      : 'No signing secret yet — roles still reconcile every 6 hours until you add it above.'}</div>
+  </div>`;
+}
+
+async function saveWebhookSecret(){
+  const inp=document.getElementById('whsecInput'); if(!inp) return;
+  const secret=(inp.value||'').trim();
+  if(!secret){ postToast('Paste the whsec_… signing secret first.'); return; }
+  const acc=activeAccount(); if(!acc){ postToast('No Stripe account selected.'); return; }
+  const b=document.getElementById('whsecSave'); if(b){ b.disabled=true; b.textContent='Saving…'; }
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/accounts/${acc.id}/webhook-secret`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify({webhook_secret:secret})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ postToast(d.error||'Could not save the secret.'); if(b){b.disabled=false;b.textContent='Save secret';} return; }
+    postToast('Signing secret saved ✓ Real-time updates are on.','success');
+    await refreshFromServer(true);
+  }catch(e){ postToast('Network error: '+e); if(b){b.disabled=false;b.textContent='Save secret';} }
+}
+
+function choose(id){ state._preset=id; applyPreset(id); render(); }
+function applyPreset(id,skipRender){
+  const p=presets().find(x=>x.id===id); const cfg=state._edit;
+  if(id==='custom'){
+    cfg.grant_on_any_relation=false;
+    if(!cfg.groups||cfg.groups.length===0) cfg.groups=[{conditions:[c('has_active_subscription','eq',true)]}];
+  } else if(p&&p.make){
+    let arg;
+    if(id==='whale') arg=state._n;
+    else if(id==='product'){ const ps=document.getElementById('prodSel'); arg=ps?ps.value:(()=>{ const a=activeAccount(); const cat=a?state._catalog[a.id]:null; return cat&&cat.products[0]?cat.products[0].id:''; })(); }
+    const r=p.make(arg);
+    cfg.grant_on_any_relation=r.grant;
+    cfg.groups=r.groups.map(cs=>({conditions:cs}));
+  }
+  recomputeDirty();
+  if(!skipRender && (id==='whale'||id==='product')){ autoPreview(); }
+}
+
+/* ---------- advanced builder ---------- */
+function renderRule(){
+  const box=document.getElementById('rule'); if(!box) return;
+  const cfg=state._edit;
+  if(!cfg.groups||cfg.groups.length===0) cfg.groups=[{conditions:[c('has_active_subscription','eq',true)]}];
+  box.innerHTML=`<p class="d" style="margin:8px 0;color:#8a93a4">Matches if a member satisfies <b>any</b> group.
+    Within a group, <b>all</b> conditions must be true.</p>`+
+    cfg.groups.map((g,gi)=>`
+    ${gi>0?'<div class="or">— OR —</div>':''}
+    <div class="grp" data-g="${gi}">
+      <div class="grp-h"><span>Group ${gi+1} — all true</span>
+        <button class="x" data-dg="${gi}">remove</button></div>
+      ${g.conditions.map((cc,ci)=>condRow(cc,gi,ci)).join('')}
+      <button data-ac="${gi}" style="margin-top:6px">+ condition</button>
+    </div>`).join('')+`<button id="ag" style="margin-top:8px">+ OR group</button>`;
+  box.querySelectorAll('[data-dg]').forEach(b=>b.onclick=()=>{ cfg.groups.splice(+b.dataset.dg,1); recomputeDirty(); renderRule(); postHeight(); });
+  box.querySelectorAll('[data-ac]').forEach(b=>b.onclick=()=>{ cfg.groups[+b.dataset.ac].conditions.push(c('has_active_subscription','eq',true)); recomputeDirty(); renderRule(); postHeight(); });
+  const ag=document.getElementById('ag'); if(ag) ag.onclick=()=>{
+    if(cfg.groups.length>=state.limits.max_groups){ postToast(`Max ${state.limits.max_groups} groups.`); return; }
+    cfg.groups.push({conditions:[c('has_active_subscription','eq',true)]}); recomputeDirty(); renderRule(); postHeight(); };
+  box.querySelectorAll('[data-cond]').forEach(wireCond);
+}
+function condRow(cc,gi,ci){
+  const tgt=targetByKey(cc.target)||state.targets[0];
+  const grps=[...new Set(state.targets.map(t=>t.group))];
+  const gl={subscription:'Subscription',customer:'Customer'};
+  const tsel=grps.map(g=>`<optgroup label="${gl[g]||g}">`+
+    state.targets.filter(t=>t.group===g).map(t=>`<option value="${t.key}" ${t.key===cc.target?'selected':''}>${esc(t.label)}</option>`).join('')+`</optgroup>`).join('');
+  let mid;
+  if(tgt.kind==='bool'){ const m=cc.value===true||cc.value==='true';
+    mid=`<select class="bv"><option value="1" ${m?'selected':''}>must be true</option><option value="0" ${!m?'selected':''}>must be false</option></select>`;
+  } else { const ops=opsForKind(tgt.kind);
+    mid=`<select class="o">${ops.map(o=>`<option value="${o.key}" ${o.key===cc.operator?'selected':''}>${esc(o.label)}</option>`).join('')}</select><span class="vw">${valWidget(tgt,cc)}</span>`; }
+  return `<div class="cond" data-cond data-g="${gi}" data-c="${ci}"><select class="t">${tsel}</select>${mid}
+    <button class="x" data-del>×</button><div class="hint">${esc(tgt.help||'')}</div></div>`;
+}
+function valWidget(tgt,cc){
+  const op=opByKey(cc.operator)||{};
+  // product / price picker
+  if(tgt.picker){
+    const a=activeAccount();
+    if(!a) return `<span class="pfx">connect Stripe first</span>`;
+    const cat=state._catalog[a.id];
+    if(!cat){ getCatalog(a.id).then(()=>{ if(state._preset==='custom') renderRule(); }); return `<span class="pfx">loading…</span>`; }
+    const list=tgt.picker==='product'?cat.products:cat.prices;
+    if(!list||list.length===0) return `<span class="pfx">no ${tgt.picker==='product'?'products':'prices'} found in Stripe</span>`;
+    const opt=it=>{ const id=it.id; const name=tgt.picker==='product'?it.name:(it.nickname||id)+(it.unit_amount_cents!=null?` ($${(it.unit_amount_cents/100).toFixed(2)}${it.interval?'/'+it.interval:''})`:''); return {id,name}; };
+    const items=list.map(opt);
+    if(op.value_is_list){ const cur=Array.isArray(cc.value)?cc.value:[];
+      return `<select class="v" multiple size="${Math.min(5,Math.max(2,items.length))}">${items.map(o=>`<option value="${esc(o.id)}" ${cur.includes(o.id)?'selected':''}>${esc(o.name)}</option>`).join('')}</select>`; }
+    return `<select class="v">${items.map(o=>`<option value="${esc(o.id)}" ${o.id===cc.value?'selected':''}>${esc(o.name)}</option>`).join('')||'<option value="">(none found)</option>'}</select>`;
+  }
+  // choices (status / interval)
+  if(tgt.choices){ if(op.value_is_list){ const cur=Array.isArray(cc.value)?cc.value:[];
+      return `<select class="v" multiple size="${Math.min(5,tgt.choices.length)}">${tgt.choices.map(o=>`<option value="${o}" ${cur.includes(o)?'selected':''}>${o}</option>`).join('')}</select>`; }
+    return `<select class="v">${tgt.choices.map(o=>`<option value="${o}" ${o===cc.value?'selected':''}>${o}</option>`).join('')}</select>`; }
+  // list (free text)
+  if(op.value_is_list) return `<input type="text" class="v" placeholder="a, b, c" value="${esc(Array.isArray(cc.value)?cc.value.join(', '):'')}">`;
+  // between
+  if(op.needs_value_end){ if(tgt.is_money) return `$<input type="number" class="v" placeholder="min" value="${cc.value!=null?dollars(cc.value):''}"> and $<input type="number" class="ve" placeholder="max" value="${cc.value_end!=null?dollars(cc.value_end):''}">`;
+    return `<input type="number" class="v" placeholder="min" value="${cc.value??''}"> and <input type="number" class="ve" placeholder="max" value="${cc.value_end??''}">`; }
+  // money
+  if(tgt.is_money) return `<span class="pfx">$</span><input type="number" class="v" value="${cc.value!=null?dollars(cc.value):''}">`;
+  // int
+  if(tgt.kind==='int') return `<input type="number" class="v" value="${cc.value??''}">`;
+  // string
+  return `<input type="text" class="v" value="${esc(cc.value==null?'':cc.value)}">`;
+}
+function wireCond(row){
+  const gi=+row.dataset.g, ci=+row.dataset.c, cfg=state._edit, cc=cfg.groups[gi].conditions[ci];
+  row.querySelector('.t').onchange=e=>{ cc.target=e.target.value; const t=targetByKey(cc.target);
+    if(t.kind==='bool'){ cc.operator='eq'; cc.value=true; }
+    else { const v=opsForKind(t.kind); if(!v.find(x=>x.key===cc.operator)) cc.operator=v[0].key;
+      cc.value=(t.kind==='string_list'||t.picker||t.choices)?'':(t.kind==='int'?'':''); if((opByKey(cc.operator)||{}).value_is_list) cc.value=[]; }
+    cc.value_end=null; recomputeDirty(); renderRule(); postHeight(); };
+  const bv=row.querySelector('.bv'); if(bv) bv.onchange=e=>{ cc.operator='eq'; cc.value=e.target.value==='1'; recomputeDirty(); };
+  const o=row.querySelector('.o'); if(o) o.onchange=e=>{ cc.operator=e.target.value;
+    const lst=(opByKey(cc.operator)||{}).value_is_list; if(lst&&!Array.isArray(cc.value)) cc.value=[]; if(!lst&&Array.isArray(cc.value)) cc.value='';
+    cc.value_end=null; recomputeDirty(); renderRule(); postHeight(); };
+  row.querySelectorAll('.v,.ve').forEach(inp=>{ const ev=inp.tagName==='SELECT'?'change':'input';
+    inp.addEventListener(ev,()=>{ const t=targetByKey(cc.target),op=opByKey(cc.operator)||{};
+      if(inp.classList.contains('ve')) cc.value_end = t.is_money?cents(inp.value):(inp.value===''?null:Number(inp.value));
+      else if(inp.multiple) cc.value=Array.from(inp.selectedOptions).map(o=>o.value);
+      else if(op.value_is_list) cc.value=inp.value.split(',').map(s=>s.trim()).filter(Boolean);
+      else if(t.is_money) cc.value=cents(inp.value);
+      else if(t.kind==='int') cc.value=inp.value===''?'':Number(inp.value);
+      else cc.value=inp.value; recomputeDirty(); }); });
+  row.querySelector('[data-del]').onclick=()=>{ cfg.groups[gi].conditions.splice(ci,1);
+    if(cfg.groups[gi].conditions.length===0) cfg.groups.splice(gi,1);
+    if(cfg.groups.length===0) cfg.groups=[{conditions:[c('has_active_subscription','eq',true)]}];
+    recomputeDirty(); renderRule(); postHeight(); };
+}
+
+async function connectAccount(){
+  const apiKey=((document.getElementById('apiKey')||{}).value||'').trim();
+  const metaKey=((document.getElementById('metaKey')||{}).value||'discord_user_id').trim();
+  if(!apiKey){ postToast('Paste your Stripe key first.'); return; }
+  const cc=document.getElementById('doConnect'); if(cc){ cc.disabled=true; cc.textContent='Connecting…'; }
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/accounts/connect`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),
+       body:JSON.stringify({api_key:apiKey,webhook_secret:null,discord_metadata_key:metaKey||'discord_user_id'})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ postToast(d.error||'Could not connect Stripe.'); if(cc){cc.disabled=false;cc.textContent='Connect Stripe';} return; }
+    state._showConnect=false;
+    postToast('Stripe connected ✓ Importing your subscribers — next, add the webhook below for instant updates.','success');
+    await refreshFromServer(true);
+  }catch(e){ postToast('Connect error: '+e); const b=document.getElementById('doConnect'); if(b){b.disabled=false;b.textContent='Connect Stripe';} }
+}
+
+async function doPreview(){ const el=document.getElementById('count'); if(!el) return;
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    const d=await r.json(); if(!r.ok||d.available===false){ el.textContent=''; return; }
+    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`+(dirty?` · <span style="color:#fbbf24">Save to apply</span>`:``);
+  }catch(_){ el.textContent=''; } postHeight(); }
+function autoPreview(){ doPreview(); }
+async function doPreviewEdit(){
+  const el=document.getElementById('count'); const btn=document.getElementById('preview'); if(!btn) return;
+  const cfg=state._edit;
+  const payload={ stripe_account_ref:cfg.stripe_account_ref, grant_on_any_relation:cfg.grant_on_any_relation,
+    groups: cfg.grant_on_any_relation?[]:(cfg.groups||[]) };
+  btn.disabled=true; const orig=btn.textContent; btn.textContent='Previewing…';
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ postToast(d.error||('Preview failed (HTTP '+r.status+')')); return; }
+    if(d.available===false){ el.textContent=d.reason||'Preview unavailable.'; postHeight(); return; }
+    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`+(dirty?` · <span style="color:#fbbf24">Preview of unsaved rule</span>`:``);
+  }catch(e){ postToast('Network error: '+e); }
+  finally{ btn.disabled=false; btn.textContent=orig; postHeight(); }
+}
+async function doSave(){
+  const cfg=state._edit;
+  if(!cfg.stripe_account_ref){ postToast('Connect a Stripe account first — without one this grants the role to nobody.'); return; }
+  const payload={ rule_tree_version:state.rule_tree_version, stripe_account_ref:cfg.stripe_account_ref,
+    grant_on_any_relation:cfg.grant_on_any_relation, groups: cfg.grant_on_any_relation?[]:(cfg.groups||[]) };
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/save`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>({}));
+    if(r.status===409){ postToast('Changed in another tab. Reload to get the latest, then re-apply.'); return; }
+    if(!r.ok){ postToast(d.error||('Save failed (HTTP '+r.status+')')); return; }
+    state.rule_tree_version=d.rule_tree_version; state.config=JSON.parse(JSON.stringify(cfg));
+    setDirty(false); postSaved();
+    postToast('Saved ✓ Roles update within a minute.','success'); autoPreview();
+  }catch(e){ postToast('Network error: '+e); }
+}
+
+async function refreshFromServer(force){
+  if(!state||refreshInFlight) return; refreshInFlight=true;
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/data`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    if(r.ok){ const d=await r.json();
+      const acCh=JSON.stringify(d.accounts)!==JSON.stringify(state.accounts);
+      const cfgCh=JSON.stringify(d.config)!==JSON.stringify(state.config);
+      if(acCh) state.accounts=d.accounts;
+      if(cfgCh&&!dirty){ state.config=d.config; state._edit=JSON.parse(JSON.stringify(d.config));
+        state.rule_tree_version=d.rule_tree_version; state._preset=detectPreset(state._edit); state._n=guessAmount(state._edit); }
+      if(force||acCh||(cfgCh&&!dirty)){ render(); prefetchCatalog(); autoPreview(); } }
+  }catch(_){}
+  finally{ refreshInFlight=false; }
+}
+window.addEventListener('message',e=>{ if(e.data&&e.data.type==='rl:visible') refreshFromServer(); });
+window.addEventListener('focus',()=>refreshFromServer());
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refreshFromServer(); });
+if(!IS_EMBEDDED) window.addEventListener('beforeunload',e=>{ if(dirty){ e.preventDefault(); e.returnValue=''; } });
+
+load();
+</script>
+</body>
+</html>

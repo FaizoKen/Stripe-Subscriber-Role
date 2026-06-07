@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stripe Subscriber Role — My status</title>
+<link rel="icon" href="{{BASE_URL}}/favicon.ico">
+<style>
+  :root { color-scheme: dark; --brand:#635bff; --ok:#3ecf8e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#0f1115; color:#e8eaed; line-height:1.55;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    font-size:15px; padding:40px 20px; }
+  .wrap { max-width:560px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:#8a93a4; margin:0 0 24px; font-size:14px; }
+  .card { background:#14171f; border:1px solid #262b36; border-radius:12px; padding:18px 20px; margin:14px 0; }
+  .btn { display:inline-block; background:var(--brand); color:#fff; border:0; border-radius:9px;
+    padding:12px 22px; font-size:15px; font-weight:600; cursor:pointer; text-decoration:none; font-family:inherit; }
+  .btn:hover { background:#544cff; }
+  .btn.sec { background:#262b36; }
+  .btn.sec:hover { background:#313845; }
+  .sub-item { display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:10px 0; border-bottom:1px solid #20242e; }
+  .sub-item:last-child { border-bottom:0; }
+  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; }
+  .badge.active { background:#10331f; color:var(--ok); }
+  .badge.trial { background:#3a2c10; color:#fbbf24; }
+  .badge.off { background:#2a1518; color:#f6b8c0; }
+  .muted { color:#8a93a4; font-size:13px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  code { background:#0b0d12; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .toast { padding:10px 12px; border-radius:8px; font-size:14px; margin-top:12px; }
+  .toast.ok { background:#10331f; border:1px solid #1f5c3a; color:#bff3d8; }
+  .toast.e { background:#2a1518; border:1px solid #5c2630; color:#f6b8c0; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><p class="sub">Loading…</p></div>
+<script>
+const BASE_URL="{{BASE_URL}}";
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function money(c,cur){ if(c==null) return ''; const v=(Number(c)/100).toFixed(2);
+  return (cur?cur.toUpperCase()+' ':'$')+v; }
+
+async function load(){
+  let d;
+  try{ const r=await fetch(`${BASE_URL}/verify/status`,{credentials:'include',cache:'no-store'});
+    d=await r.json(); }catch(e){ app().innerHTML=`<div class="toast e">Network error.</div>`; return; }
+  render(d);
+}
+function app(){ return document.getElementById('app'); }
+
+function render(d){
+  if(!d.signed_in_discord){
+    app().innerHTML=`<h1>Your subscription status</h1>
+      <p class="sub">Sign in with Discord to see which subscriber roles you qualify for.</p>
+      <form method="POST" action="${BASE_URL}/verify/login"><button class="btn" type="submit">Sign in with Discord</button></form>`;
+    return;
+  }
+  const ms=d.memberships||[];
+  let body;
+  if(ms.length===0){
+    body=`<div class="card"><b>No Stripe subscription is linked to your Discord yet.</b>
+      <p class="muted" style="margin:8px 0 0">Linking is automatic — when you subscribe, your Discord
+      account is attached to the payment, and your role appears within a minute. If you just subscribed,
+      give it a moment and tap “Re-check”. If you paid with a different email or account, contact the
+      server admin.</p></div>`;
+  } else {
+    body=`<div class="card">${ms.map(m=>{
+      const st=m.has_active_subscription?(m.is_trialing?'trial':'active'):'off';
+      const label=m.has_active_subscription?(m.is_trialing?'Trial':'Active'):(m.status||'Inactive');
+      const plan=m.plan_amount_cents?` · ${money(m.plan_amount_cents,m.currency)}`:'';
+      const cancel=m.cancels_at_period_end?' · cancels at period end':'';
+      return `<div class="sub-item">
+        <div><div><b>${esc(m.account)}</b> ${m.livemode?'':'<span class="muted">(test)</span>'}</div>
+          <div class="muted">${esc(label)}${plan}${cancel}</div></div>
+        <span class="badge ${st}">${st==='active'?'ACTIVE':st==='trial'?'TRIAL':'INACTIVE'}</span></div>`;
+    }).join('')}</div>`;
+  }
+  app().innerHTML=`<h1>Hi ${esc(d.discord_username||'there')} 👋</h1>
+    <p class="sub">Your Stripe subscriber roles are granted automatically based on the status below.</p>
+    ${body}
+    <div class="row">
+      <button class="btn sec" id="recheck">Re-check now</button>
+    </div>
+    <div id="msg"></div>`;
+  document.getElementById('recheck').addEventListener('click',recheck);
+}
+
+async function recheck(){
+  const b=document.getElementById('recheck'); b.disabled=true; b.textContent='Re-checking…';
+  try{ const r=await fetch(`${BASE_URL}/verify/refresh`,{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'}});
+    if(r.ok) document.getElementById('msg').innerHTML=`<div class="toast ok">Re-checking your roles — they'll update within a minute.</div>`;
+    else document.getElementById('msg').innerHTML=`<div class="toast e">Could not refresh. Try again shortly.</div>`;
+  }catch(e){ document.getElementById('msg').innerHTML=`<div class="toast e">Network error.</div>`; }
+  finally{ b.disabled=false; b.textContent='Re-check now'; }
+}
+load();
+</script>
+</body>
+</html>
