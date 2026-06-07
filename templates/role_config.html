@@ -338,10 +338,14 @@ function render(){
 function webhookHelp(a){
   const events=state.webhook_events||[];
   const evt=events.map(e=>`<li>${esc(e)}</li>`).join('');
-  return `<div class="wh">
-    <b>Turn on real-time updates (recommended)</b>
-    <details class="guide" open style="margin-top:8px;background:#0b1320">
-      <summary>How to set up the webhook &amp; get your signing secret (whsec_…)</summary>
+  const configured=!!a.webhook_configured;
+  // Step-by-step form. Open by default only when no secret is saved yet;
+  // once linked it collapses into an optional "replace secret" panel.
+  const form=`
+    <details class="guide" ${configured?'':'open'} style="margin-top:8px;background:#0b1320">
+      <summary>${configured
+        ? 'Replace the webhook or update its signing secret'
+        : 'How to set up the webhook &amp; get your signing secret (whsec_…)'}</summary>
       <ol>
         <li>Open <a href="https://dashboard.stripe.com/webhooks/create" target="_blank" rel="noopener noreferrer">Stripe → Add a webhook endpoint</a> (use the same <b>Live / Test</b> mode as your key).</li>
         <li>Set <b>Endpoint URL</b> to this (copy it):
@@ -355,10 +359,20 @@ function webhookHelp(a){
             <input id="whsecInput" type="password" placeholder="whsec_…" autocomplete="off" style="flex:1;min-width:0">
             <button id="whsecSave" class="primary" style="padding:8px 14px">Save secret</button></div></li>
       </ol>
-    </details>
-    <div class="hintmini">${a.webhook_configured
-      ? 'Signing secret saved ✓ — real-time updates are on.'
-      : 'No signing secret yet — roles still reconcile every 6 hours until you add it above.'}</div>
+    </details>`;
+  if(configured){
+    // Linked: don't push the whole form — just confirm it's on, with the
+    // replace panel tucked away (collapsed) for anyone who needs to rotate it.
+    return `<div class="wh">
+      <b>Real-time updates are on ✓</b>
+      <div class="hintmini" style="margin-top:4px">Webhook connected — subscription changes apply within seconds.</div>
+      ${form}
+    </div>`;
+  }
+  return `<div class="wh">
+    <b>Turn on real-time updates (recommended)</b>
+    ${form}
+    <div class="hintmini">No signing secret yet — roles still reconcile every few hours until you add it above.</div>
   </div>`;
 }
 
