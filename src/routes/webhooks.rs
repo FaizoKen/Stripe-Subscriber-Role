@@ -114,6 +114,18 @@ pub async fn stripe_webhook(
                     tracing::warn!(account_ref, "recompute after webhook failed: {e}");
                 }
                 let _ = jobs::enqueue_player_sync(&state.pool, &did).await;
+                tracing::info!(
+                    account_ref,
+                    event_type,
+                    discord_id = %did,
+                    "Stripe webhook applied; member facts recomputed and re-sync queued"
+                );
+            } else {
+                tracing::info!(
+                    account_ref,
+                    event_type,
+                    "Stripe webhook applied; no linked Discord member affected"
+                );
             }
             (StatusCode::OK, "ok")
         }

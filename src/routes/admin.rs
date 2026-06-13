@@ -868,7 +868,9 @@ async fn preview_count_for(
     }
     let account_ref = account_ref.expect("account bound checked above");
 
-    let member_ids = match auth_gateway::fetch_guild_member_ids(
+    // Mirror the sync engine's universe: everyone linked to this account minus
+    // opt-outs (NOT gated on the gateway member list — see `sync_for_role_link`).
+    let optout_ids = match auth_gateway::fetch_guild_optout_ids(
         &state.http,
         &state.config.auth_gateway_url,
         &state.config.internal_api_key,
@@ -880,22 +882,17 @@ async fn preview_count_for(
         Err(_) => {
             return Ok(Json(json!({
                 "available": false,
-                "reason": "Member list temporarily unavailable; preview will work once the Auth Gateway responds."
+                "reason": "Opt-out list temporarily unavailable; preview will work once the Auth Gateway responds."
             })))
         }
     };
-    if member_ids.is_empty() {
-        return Ok(Json(
-            json!({ "matching": 0, "linked": 0, "available": true }),
-        ));
-    }
 
     let linked: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM stripe_member_facts \
-         WHERE account_ref = $1 AND discord_id = ANY($2::text[])",
+         WHERE account_ref = $1 AND discord_id <> ALL($2::text[])",
     )
     .bind(account_ref)
-    .bind(&member_ids)
+    .bind(&optout_ids)
     .fetch_one(&state.pool)
     .await?;
 
@@ -910,11 +907,11 @@ async fn preview_count_for(
     let (rule_where, binds) = rule_sql::build_rule_where(tree, 2);
     let query = format!(
         "SELECT count(*) FROM stripe_member_facts mf \
-         WHERE mf.account_ref = $1 AND mf.discord_id = ANY($2::text[]) AND ({rule_where})"
+         WHERE mf.account_ref = $1 AND mf.discord_id <> ALL($2::text[]) AND ({rule_where})"
     );
     let mut q = sqlx::query_scalar::<_, i64>(&query)
         .bind(account_ref)
-        .bind(&member_ids);
+        .bind(&optout_ids);
     for b in &binds {
         q = match b {
             Bind::Bool(v) => q.bind(*v),

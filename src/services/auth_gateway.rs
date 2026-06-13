@@ -26,10 +26,8 @@ struct UserGuildIdsResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct GuildMemberIdsResponse {
+struct GuildOptoutIdsResponse {
     discord_ids: Vec<String>,
-    #[serde(default)]
-    guild_name: Option<String>,
 }
 
 pub async fn fetch_user_guild_ids(
@@ -64,32 +62,25 @@ pub async fn fetch_user_guild_ids(
     Ok(parsed.guild_ids)
 }
 
-pub async fn fetch_guild_member_ids(
+/// Discord IDs that have opted OUT of this guild for this plugin (or guild-wide).
+///
+/// Plugins whose candidate set comes from their own linked data — rather than
+/// the gateway's member list — subtract these so the centralized opt-out
+/// system is still honored for members the gateway has never seen log in.
+///
+/// Errors bubble up (Convention 40): the caller must retry, NEVER treat a
+/// gateway hiccup as "nobody opted out" — doing so would re-grant a role the
+/// member explicitly stripped.
+pub async fn fetch_guild_optout_ids(
     http: &reqwest::Client,
     base: &str,
     key: &str,
     guild_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    Ok(fetch_guild_member_ids_full(http, base, key, guild_id)
-        .await?
-        .0)
-}
-
-/// Same call as [`fetch_guild_member_ids`] but also returns the gateway's
-/// cached guild display name (`None` if the gateway has never seen it).
-pub async fn fetch_guild_member_ids_full(
-    http: &reqwest::Client,
-    base: &str,
-    key: &str,
-    guild_id: &str,
-) -> Result<(Vec<String>, Option<String>), AppError> {
-    let url = format!("{base}/auth/internal/guild_member_ids");
+    let url = format!("{base}/auth/internal/guild_optout_ids");
     let resp = http
         .get(&url)
         .header("X-Internal-Key", key)
-        // `plugin` excludes members who have opted out of this plugin in
-        // this guild, so the atomic role replacement on the next sync
-        // drops their role on Discord's side too.
         .query(&[("guild_id", guild_id), ("plugin", PLUGIN_SLUG)])
         .send()
         .await
@@ -99,13 +90,13 @@ pub async fn fetch_guild_member_ids_full(
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         return Err(AppError::Internal(format!(
-            "auth_gateway guild_member_ids returned {status}: {body}"
+            "auth_gateway guild_optout_ids returned {status}: {body}"
         )));
     }
 
-    let parsed: GuildMemberIdsResponse = resp
+    let parsed: GuildOptoutIdsResponse = resp
         .json()
         .await
         .map_err(|e| AppError::Internal(format!("auth_gateway response not JSON: {e}")))?;
-    Ok((parsed.discord_ids, parsed.guild_name))
+    Ok(parsed.discord_ids)
 }

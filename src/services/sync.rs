@@ -325,13 +325,56 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
     let pool = &state.pool;
     let rl_client = &state.rl_client;
 
-    let guild_ids = auth_gateway::fetch_user_guild_ids(
+    // Guilds the gateway already knows the user is in (opt-out filtered).
+    let mut guild_ids = auth_gateway::fetch_user_guild_ids(
         &state.http,
         &state.config.auth_gateway_url,
         &state.config.internal_api_key,
         discord_id,
     )
     .await?;
+
+    // Guilds where this user is a Stripe customer/subscriber, derived from the
+    // guild each connected account belongs to. A brand-new subscriber who has
+    // never signed into RoleLogic is absent from the gateway list above but
+    // present here — this is what lets them get their role *without* opening
+    // the verify page. RoleLogic's bot still enforces actual guild membership
+    // when it applies the role.
+    let subscriber_guilds: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT sa.guild_id \
+         FROM stripe_member_facts mf \
+         JOIN stripe_accounts sa ON sa.id = mf.account_ref \
+         WHERE mf.discord_id = $1",
+    )
+    .bind(discord_id)
+    .fetch_all(pool)
+    .await?;
+
+    // Add subscriber guilds the gateway didn't already return, but first vet
+    // each for an opt-out: a user who logged in and opted this guild/plugin out
+    // is missing from the gateway list *for that reason*, so we must not
+    // re-add it. (A never-logged-in user can't have opted out.) Convention 40:
+    // an opt-out lookup error bubbles up and the job retries.
+    let extra: Vec<String> = {
+        let known: HashSet<&str> = guild_ids.iter().map(String::as_str).collect();
+        subscriber_guilds
+            .into_iter()
+            .filter(|g| !known.contains(g.as_str()))
+            .collect()
+    };
+    for g in extra {
+        let optouts = auth_gateway::fetch_guild_optout_ids(
+            &state.http,
+            &state.config.auth_gateway_url,
+            &state.config.internal_api_key,
+            &g,
+        )
+        .await?;
+        if !optouts.iter().any(|o| o == discord_id) {
+            guild_ids.push(g);
+        }
+    }
+
     if guild_ids.is_empty() {
         return Ok(());
     }
@@ -500,17 +543,22 @@ pub async fn sync_for_role_link(
     }
     let account_ref = account_ref.expect("account bound checked above");
 
-    let member_ids = auth_gateway::fetch_guild_member_ids(
+    // Candidate universe = everyone linked to this account (i.e. has a facts
+    // row), minus anyone who opted this guild/plugin out. We deliberately do
+    // NOT gate on the gateway's guild member list (`fetch_guild_member_ids`):
+    // a subscriber who has never signed into RoleLogic is absent from it, yet
+    // RoleLogic's bot is the real authority on who is actually in the guild
+    // when it applies the role. Opt-outs are still honored centrally, so a
+    // member who explicitly opted out is dropped from the next atomic PUT.
+    // Convention 40: an opt-out lookup error bubbles up and the job retries —
+    // we never treat a hiccup as "nobody opted out".
+    let optout_ids = auth_gateway::fetch_guild_optout_ids(
         &state.http,
         &state.config.auth_gateway_url,
         &state.config.internal_api_key,
         guild_id,
     )
     .await?;
-    if member_ids.is_empty() {
-        drain_to_empty(guild_id, role_id, &api_token, state).await?;
-        return Ok(());
-    }
 
     let (_count, user_limit) = match rl.get_user_info(guild_id, role_id, &api_token).await {
         Ok(v) => v,
@@ -521,21 +569,22 @@ pub async fn sync_for_role_link(
         Err(_) => (0, 100),
     };
 
-    // $1 = account_ref, $2 = member_ids, rule binds from $3, limit last.
+    // $1 = account_ref, $2 = optout_ids, rule binds from $3, limit last.
+    // `<> ALL($2)` keeps everyone when the opt-out list is empty.
     let (rule_where, binds) = rule_sql::build_rule_where(&tree, 2);
     let limit_idx = 2 + binds.len() + 1;
     let query = format!(
         "SELECT mf.discord_id \
          FROM stripe_member_facts mf \
          WHERE mf.account_ref = $1 \
-           AND mf.discord_id = ANY($2::text[]) \
+           AND mf.discord_id <> ALL($2::text[]) \
            AND ({rule_where}) \
          ORDER BY mf.discord_id \
          LIMIT ${limit_idx}"
     );
     let mut q = sqlx::query_scalar::<_, String>(&query)
         .bind(account_ref)
-        .bind(&member_ids);
+        .bind(&optout_ids);
     for b in &binds {
         q = match b {
             Bind::Bool(v) => q.bind(*v),
