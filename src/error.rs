@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Role link not found on RoleLogic")]
     RoleLinkNotFound,
 
+    #[error("Role link is disabled on RoleLogic")]
+    RoleLinkDisabled,
+
     #[error("Role link user limit reached ({limit})")]
     UserLimitReached { limit: usize },
 
@@ -66,6 +69,11 @@ impl IntoResponse for AppError {
             AppError::RoleLinkNotFound => (
                 StatusCode::NOT_FOUND,
                 axum::Json(json!({ "error": "Role link not found" })),
+            )
+                .into_response(),
+            AppError::RoleLinkDisabled => (
+                StatusCode::FORBIDDEN,
+                axum::Json(json!({ "error": "Role link is disabled" })),
             )
                 .into_response(),
             AppError::UserLimitReached { limit } => {
