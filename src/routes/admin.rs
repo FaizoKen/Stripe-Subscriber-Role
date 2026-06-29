@@ -642,10 +642,16 @@ async fn require_role_config_access(
                 "Token does not grant access to this role link.".into(),
             ));
         }
-        return Ok(RoleConfigAccess { discord_id: s.discord_id, read_only: s.read_only });
+        return Ok(RoleConfigAccess {
+            discord_id: s.discord_id,
+            read_only: s.read_only,
+        });
     }
     let discord_id = require_manager(state, jar, guild_id).await?;
-    Ok(RoleConfigAccess { discord_id, read_only: false })
+    Ok(RoleConfigAccess {
+        discord_id,
+        read_only: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
