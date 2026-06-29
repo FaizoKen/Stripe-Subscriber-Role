@@ -19,6 +19,9 @@ pub fn build_iframe_config(base_url: &str, guild_id: &str, role_id: &str) -> Val
         "name": "Stripe Subscriber Role",
         "description": "Grant Discord roles from Stripe — active subscribers, specific plans, trials, lifetime spend, and more, with rich condition logic.",
         "embed_url": embed_url,
+        // We honor read_only impersonation tokens (writes are blocked server-side),
+        // so RoleLogic may hand us a read-only token for viewing.
+        "supports_impersonation_readonly": true,
     })
 }
 

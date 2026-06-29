@@ -114,6 +114,32 @@ window.addEventListener('load',postHeight);
 
 function apiHeaders(x){ const h=Object.assign({'Content-Type':'application/json'},x||{});
   if(IFRAME_TOKEN) h['Authorization']='Bearer '+IFRAME_TOKEN; return h; }
+// Read-only mode: a RoleLogic developer viewing this config while
+// impersonating the user. The server (admin.rs) rejects writes; we also
+// lock the UI. Self-contained IIFE with generic selectors so it works
+// regardless of this template's layout.
+(function(){
+  var READ_ONLY = '__READ_ONLY__' === '1';
+  if (!READ_ONLY) return;
+  document.documentElement.classList.add('rl-read-only');
+  var st = document.createElement('style');
+  st.textContent =
+    '.rl-read-only input,.rl-read-only select,.rl-read-only textarea,' +
+    '.rl-read-only button:not(.rl-ro-allow),.rl-read-only [contenteditable]' +
+    '{pointer-events:none !important;opacity:.6 !important}' +
+    '.rl-ro-banner{position:sticky;top:0;z-index:9999;background:#3a2d05;' +
+    'color:#fbbf24;border-bottom:1px solid #6b5409;padding:8px 16px;' +
+    'font:600 13px system-ui,sans-serif}';
+  document.head.appendChild(st);
+  function addBanner(){
+    var bn = document.createElement('div');
+    bn.className = 'rl-ro-banner rl-ro-allow';
+    bn.textContent = 'Read-only \u2014 impersonating a user. Changes are disabled.';
+    document.body.prepend(bn);
+  }
+  if (document.body) addBanner();
+  else addEventListener('DOMContentLoaded', addBanner);
+})();
 function apiCreds(){ return IS_EMBEDDED?'omit':'include'; }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
