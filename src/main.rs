@@ -180,6 +180,7 @@ async fn main() {
         .route("/verify/refresh", post(routes::verify::verify_refresh))
         // Health & static
         .route("/favicon.ico", get(routes::health::favicon))
+        .route("/dweeb/status", get(routes::dweeb::status))
         .route("/health", get(routes::health::health))
         .route("/ready", get(routes::health::ready));
 
