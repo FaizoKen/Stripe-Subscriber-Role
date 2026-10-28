@@ -35,9 +35,12 @@ EXPOSE 8096
 
 # Healthcheck mirrors the route exposed by `routes::health::health`. We bind
 # to localhost since the container is the only thing on `LISTEN_ADDR`.
+# The port comes from LISTEN_ADDR (production binds 40xx, not EXPOSE's
+# default), falling back to the app's own default when it is unset.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl --fail --silent --max-time 2 \
-        http://127.0.0.1:8096/stripe-subscriber-role/health || exit 1
+    CMD addr="${LISTEN_ADDR:-0.0.0.0:8096}"; \
+        curl --fail --silent --max-time 2 \
+        "http://127.0.0.1:${addr##*:}/stripe-subscriber-role/health" || exit 1
 
 USER app:app
 
