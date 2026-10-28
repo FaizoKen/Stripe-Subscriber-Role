@@ -209,9 +209,21 @@ async fn main() {
 
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(5)
+            // One request every 200 ms, i.e. 5/s sustained: tower_governor's
+            // `per_second(n)` means one request every n seconds.
+            .per_millisecond(200)
             .burst_size(20)
             .key_extractor(SmartIpKeyExtractor)
+            // A rejection is answered before the request body is read, so
+            // hyper closes the connection after it. Say so: without
+            // `Connection: close`, cloudflared puts the socket back in its
+            // pool and the next request it sends on it fails with a 502.
+            .error_handler(|mut err| {
+                let mut res = err.as_response::<axum::body::Body>();
+                res.headers_mut()
+                    .insert(header::CONNECTION, HeaderValue::from_static("close"));
+                res
+            })
             .finish()
             .expect("Failed to build governor config"),
     );
