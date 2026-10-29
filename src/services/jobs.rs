@@ -205,6 +205,34 @@ where
     enqueue(executor, JobKind::ConfigSync, payload, 5).await
 }
 
+/// Config-sync `delay_secs` from now, unless one for this link is already
+/// waiting to run. A link whose write RoleLogic keeps holding re-checks on a
+/// timer; without the check every reconcile pass would start another chain.
+pub async fn enqueue_config_sync_unless_queued<'e, E>(
+    executor: E,
+    guild_id: &str,
+    role_id: &str,
+    delay_secs: u64,
+) -> Result<(), AppError>
+where
+    E: PgExecutor<'e>,
+{
+    let payload = json!({ "guild_id": guild_id, "role_id": role_id });
+    sqlx::query(
+        "INSERT INTO jobs (kind, payload, next_run_at) \
+         SELECT $1, $2, now() + make_interval(secs => $3) \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM jobs WHERE kind = $1 AND status = 'pending' AND payload = $2 \
+         )",
+    )
+    .bind(JobKind::ConfigSync.as_str())
+    .bind(payload)
+    .bind(delay_secs as f64)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Re-evaluate every role link bound to a Stripe account after its data
 /// changed (backfill / reconcile finished). De-duped: only enqueues if no
 /// identical `account_sync` is already pending.

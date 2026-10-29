@@ -620,6 +620,8 @@ pub async fn sync_for_role_link(
             delete_orphan_role_link(guild_id, role_id, pool).await;
             return Ok(());
         }
+        Err(AppError::RoleLinkDisabled) => return Ok(()),
+        Err(AppError::RemovalHeld) => return recheck_held(guild_id, role_id, pool).await,
         Err(e) => return Err(e),
     }
 
@@ -671,6 +673,8 @@ async fn drain_to_empty(
             delete_orphan_role_link(guild_id, role_id, &state.pool).await;
             return Ok(());
         }
+        Err(AppError::RoleLinkDisabled) => return Ok(()),
+        Err(AppError::RemovalHeld) => return recheck_held(guild_id, role_id, &state.pool).await,
         Err(e) => return Err(e),
     }
     sqlx::query("DELETE FROM role_assignments WHERE guild_id=$1 AND role_id=$2")
@@ -696,6 +700,26 @@ pub async fn sync_for_account(account_ref: i64, state: &AppState) -> Result<(), 
         jobs::enqueue_config_sync(&state.pool, &guild_id, &role_id).await?;
     }
     Ok(())
+}
+
+/// How soon a held write is tried again. Confirming the removals in the
+/// RoleLogic dashboard lets the next write through for an hour, and this
+/// plugin otherwise re-syncs a link only every 6 hours (reconcile), so it
+/// comes back well inside that hour.
+const HELD_RECHECK_SECS: u64 = 20 * 60;
+
+/// RoleLogic is holding this link's write until an owner confirms the
+/// removals (Safe Apply's shrink gate). That is a decision waiting on a
+/// person, not a failure: leave the local mirror as it was and look again
+/// later, recomputing the list then.
+async fn recheck_held(guild_id: &str, role_id: &str, pool: &sqlx::PgPool) -> Result<(), AppError> {
+    tracing::info!(
+        guild_id,
+        role_id,
+        "RoleLogic is holding this link's removals for owner confirmation; re-checking in {} min",
+        HELD_RECHECK_SECS / 60
+    );
+    jobs::enqueue_config_sync_unless_queued(pool, guild_id, role_id, HELD_RECHECK_SECS).await
 }
 
 /// Delete a role_link the RoleLogic API reports as gone (Convention 47).
