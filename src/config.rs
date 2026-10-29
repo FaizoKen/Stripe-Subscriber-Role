@@ -11,10 +11,15 @@ pub struct DbPoolConfig {
 impl DbPoolConfig {
     fn from_env() -> Self {
         Self {
+            // Below the bundled Postgres's max_connections=15, which the
+            // healthcheck, the daily pg_dump and an admin psql share with
+            // this pool. A pool that can fill all 15 keeps them refused
+            // ("too many clients", a FATAL in the DB log) for as long as it
+            // holds its idle connections.
             max_connections: env::var("DB_MAX_CONNECTIONS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(16),
+                .unwrap_or(10),
             min_connections: env::var("DB_MIN_CONNECTIONS")
                 .ok()
                 .and_then(|v| v.parse().ok())
