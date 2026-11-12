@@ -351,10 +351,12 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
     .await?;
 
     // Add subscriber guilds the gateway didn't already return, but first vet
-    // each for an opt-out: a user who logged in and opted this guild/plugin out
-    // is missing from the gateway list *for that reason*, so we must not
-    // re-add it. (A never-logged-in user can't have opted out.) Convention 40:
-    // an opt-out lookup error bubbles up and the job retries.
+    // each for an opt-out: a user who paused this guild/plugin is missing from
+    // the gateway list *for that reason*, so we must not re-add it. The vet
+    // counts only pauses the user made: the gateway list also leaves out
+    // guilds it paused by default, and those must not cost a subscriber the
+    // role (see `fetch_guild_optout_ids`). Convention 40: an opt-out lookup
+    // error bubbles up and the job retries.
     let extra: Vec<String> = {
         let known: HashSet<&str> = guild_ids.iter().map(String::as_str).collect();
         subscriber_guilds
@@ -549,7 +551,8 @@ pub async fn sync_for_role_link(
     // a subscriber who has never signed into RoleLogic is absent from it, yet
     // RoleLogic's bot is the real authority on who is actually in the guild
     // when it applies the role. Opt-outs are still honored centrally, so a
-    // member who explicitly opted out is dropped from the next atomic PUT.
+    // member who paused this guild themselves is dropped from the next atomic
+    // PUT; a pause the gateway applied by default is not an opt-out here.
     // Convention 40: an opt-out lookup error bubbles up and the job retries —
     // we never treat a hiccup as "nobody opted out".
     let optout_ids = auth_gateway::fetch_guild_optout_ids(

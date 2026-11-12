@@ -68,6 +68,14 @@ pub async fn fetch_user_guild_ids(
 /// the gateway's member list — subtract these so the centralized opt-out
 /// system is still honored for members the gateway has never seen log in.
 ///
+/// Only pauses the member made themselves (`explicit_only=true`). The gateway
+/// also pauses, by default, every server a member is first seen in or joins
+/// later unless they turned that off — a default nobody chose. Honoring it
+/// dropped paying subscribers who had merely signed in somewhere once: on
+/// 2026-11-12, 6 of the 9 subscribers the gateway knew to be in RoleLogic's
+/// own server. Their subscription carries their Discord id, which is a
+/// choice; the default is not.
+///
 /// Errors bubble up (Convention 40): the caller must retry, NEVER treat a
 /// gateway hiccup as "nobody opted out" — doing so would re-grant a role the
 /// member explicitly stripped.
@@ -81,7 +89,11 @@ pub async fn fetch_guild_optout_ids(
     let resp = http
         .get(&url)
         .header("X-Internal-Key", key)
-        .query(&[("guild_id", guild_id), ("plugin", PLUGIN_SLUG)])
+        .query(&[
+            ("guild_id", guild_id),
+            ("plugin", PLUGIN_SLUG),
+            ("explicit_only", "true"),
+        ])
         .send()
         .await
         .map_err(|e| AppError::Internal(format!("auth_gateway request failed: {e}")))?;
