@@ -60,4 +60,8 @@ jobs:
           # RUSTSEC-2023-0071: Marvin Attack timing side-channel in `rsa`,
           # pulled in transitively by sqlx-macros-core (never executed — we
           # only enable sqlx's `postgres` feature). No upstream fix yet.
-          ignore: RUSTSEC-2023-0071
+          # RUSTSEC-2026-0459: bundled SQLite in `libsqlite3-sys` 0.30.1. Same
+          # story: it is in Cargo.lock only as sqlx-macros-core's optional
+          # sqlite backend; `cargo tree -i libsqlite3-sys --target all` prints
+          # nothing, so no SQLite is built or linked into this plugin.
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0459
