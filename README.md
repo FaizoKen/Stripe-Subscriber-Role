@@ -22,8 +22,14 @@ read straight from Stripe — in this priority order:
 
 1. `subscription.metadata.<key>` (default key: `discord_user_id`)
 2. the subscription's customer `metadata.<key>`
-3. a `checkout.session.completed`'s `client_reference_id`
+3. a completed Checkout Session's `metadata.<key>` or `client_reference_id`
+   (live through `checkout.session.completed`, and on import when the key can
+   read Checkout Sessions)
 4. an already-linked customer row
+
+One-time payments (Checkout in `payment` mode) link the same way, as long as
+Checkout saves a customer (`customer_creation: "always"`): a guest checkout has
+no customer to credit.
 
 The default key `discord_user_id` matches **RoleLogic's own billing** exactly
 ([`api/src/common/stripe.service.ts`](../../rolelogic/api/src/common/stripe.service.ts)
@@ -48,7 +54,14 @@ If you use a different metadata field name (e.g. `discordId`), set it as the
 
 > No Discord ID in Stripe at all? Then this plugin can't link those customers —
 > add the metadata above to your checkout and re-run a sync (it backfills on the
-> 6-hour reconcile, or instantly via webhooks).
+> 6-hour reconcile, or instantly via webhooks). Prefer the subscription's
+> metadata: an import always reads it, while a `client_reference_id` alone is
+> read only by the webhook and by an import whose key can read Checkout
+> Sessions.
+
+Rule values are compared the way Stripe stores them, whatever case you type:
+country codes upper case (`us` → `US`), currencies lower case (`USD` → `usd`),
+email domains lower case without the `@`.
 
 ---
 
@@ -66,12 +79,15 @@ Grant **Read** on:
 |---|---|
 | Customers | who the customers are, email, country, delinquency |
 | Subscriptions | status, plan, price, renewal, trial |
-| Charges (Payment Intents) | lifetime spend / payment count *(optional)* |
+| Charges | lifetime spend / payment count, refunds taken off *(optional)* |
 | Products & Prices | the plan picker in the rule builder |
+| Checkout Sessions *(recommended)* | links buyers whose checkout carried the Discord ID only on the session |
 | Account *(optional)* | shows your business name instead of a generic label |
 
-Copy the key — it starts with `rk_live_…` (or `rk_test_…`). **Never** paste a
-full secret `sk_…` key if you can avoid it; restricted is safer.
+Click **Create key**, confirm with the code Stripe sends, then click the key to
+copy it — it starts with `rk_live_…` (or `rk_test_…`), and Stripe shows a live
+key only once. **Never** paste a full secret `sk_…` key if you can avoid it;
+restricted is safer.
 
 ### 2. Connect it in the rule builder
 
@@ -87,8 +103,10 @@ The connect screen shows a per-account webhook URL like:
 https://<your-domain>/stripe-subscriber-role/webhooks/stripe/<account_ref>
 ```
 
-In Stripe → **Developers → Webhooks → Add endpoint**, point it at that URL and
-subscribe these events:
+In Stripe → **Workbench → Webhooks → Create an event destination**: choose
+**Your account** and the **Snapshot** payload (not Thin — a Thin event carries
+no object, and the plugin answers it 200 and flags it on the settings page),
+subscribe these events, choose **Webhook endpoint** and paste that URL:
 
 ```
 checkout.session.completed
@@ -98,12 +116,20 @@ customer.subscription.deleted
 customer.updated
 customer.deleted
 charge.succeeded
+charge.refunded
 invoice.payment_failed
 ```
 
-Then paste the endpoint's **signing secret** (`whsec_…`) back into the plugin
-(Connect another → same key + the secret). Signatures are verified on every
-delivery. Without a webhook, roles still reconcile every 6 hours.
+Then click **Reveal** next to the destination's **Signing secret** and paste
+the `whsec_…` value into the box under the steps (Save secret). Signatures
+are verified on every delivery. Without a webhook, roles still reconcile
+every 6 hours.
+
+The account card then says when Stripe last delivered an event, or what is
+wrong: a delivery whose signature didn't match the saved secret, Thin events,
+or events arriving before a secret was saved. It also counts how many imported
+customers carry a Discord ID, and shows Stripe's own message if an import
+fails (usually a missing Read permission).
 
 ### 4. Pick who gets the role
 

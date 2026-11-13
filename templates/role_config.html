@@ -38,6 +38,10 @@
   button:hover { background:#313845; }
   button.primary { background:var(--brand); color:#fff; padding:11px 22px; font-size:14px; }
   button.primary:hover { background:#544cff; }
+  button.danger { background:#3a1a20; color:#fca5a5; }
+  button.danger:hover { background:#4a1f27; }
+  button.ghost { background:none; border:1px solid #2a2f3a; color:#9aa3b2; padding:7px 12px; }
+  button.ghost:hover { background:none; border-color:#5c2630; color:#fca5a5; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   button.x { background:none; color:#8a93a4; padding:4px 6px; }
   button.x:hover { color:#fca5a5; }
@@ -52,9 +56,18 @@
   .badge { font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:10px; vertical-align:middle; }
   .badge.live { background:#10331f; color:var(--ok); }
   .badge.test { background:#3a2c10; color:#fbbf24; }
+  .status { font-size:12px; margin-top:7px; color:#9aa3b2; }
+  .status .ok { color:var(--ok); font-weight:600; }
+  .status .warn { color:#fbbf24; }
+  .status .err { color:#f6b8c0; }
+  .confirm { margin-top:10px; padding:10px 12px; border-radius:8px; background:#2a1518;
+    border:1px solid #5c2630; color:#f6b8c0; font-size:12.5px; }
+  .confirm .row { margin-top:8px; }
   .wh { background:#101826; border:1px solid #1f3346; border-radius:10px; padding:12px 14px; margin-top:10px;
     font-size:12.5px; color:#a9c3d8; }
   .wh b { color:#dbeafe; }
+  .wh.bad { background:#24151a; border-color:#5c2630; }
+  .wh.bad b { color:#fecdd3; }
   .copybox { display:flex; gap:8px; margin-top:8px; align-items:stretch; }
   .copybox code { flex:1; min-width:0; background:#0b0d12; border:1px solid #234; border-radius:6px;
     padding:8px 10px; font-size:12px; overflow:auto; white-space:nowrap; }
@@ -62,6 +75,10 @@
   .share { background:#16162b; border:1px solid #2b2b52; border-radius:10px; padding:13px 15px;
     margin:20px 0; font-size:13px; color:#bdbfe8; }
   .share b { color:#e3e3ff; }
+  pre.snippet { margin:8px 0 4px; padding:10px 12px; background:#0b0d12; border:1px solid #2b2b52;
+    border-radius:7px; font-size:11.5px; line-height:1.5; color:#c9cdf7; overflow:auto; white-space:pre; }
+  pre.snippet .k { color:#8a9bff; }
+  pre.snippet .s { color:#7ee2b8; }
   .adv { margin:6px 0 0; }
   .grp { border:1px solid #2a2f3a; border-radius:9px; padding:11px; margin:8px 0; background:#13161e; }
   .grp-h { display:flex; justify-content:space-between; color:#8a93a4; font-size:12px; margin-bottom:6px; }
@@ -76,6 +93,7 @@
   .foot-btns { display:flex; gap:10px; align-items:center; margin-left:auto; }
   .count { color:#8a93a4; font-size:12.5px; }
   .count .ok { color:var(--ok); font-weight:600; }
+  .count .unsaved { color:#fbbf24; }
   .toast { padding:10px 12px; border-radius:8px; font-size:13px; margin-top:12px; }
   .toast.e { background:#2a1518; border:1px solid #5c2630; color:#f6b8c0; }
   .hidden { display:none !important; }
@@ -134,7 +152,7 @@ function apiHeaders(x){ const h=Object.assign({'Content-Type':'application/json'
   function addBanner(){
     var bn = document.createElement('div');
     bn.className = 'rl-ro-banner rl-ro-allow';
-    bn.textContent = 'Read-only \u2014 impersonating a user. Changes are disabled.';
+    bn.textContent = 'Read-only — impersonating a user. Changes are disabled.';
     document.body.prepend(bn);
   }
   if (document.body) addBanner();
@@ -161,8 +179,9 @@ let state=null, dirty=false, refreshInFlight=false;
 function setDirty(d){ dirty=d; postDirty(d); const s=document.getElementById('save'); if(s) s.disabled=!d; }
 function ruleKey(c){ return JSON.stringify({ a:c.stripe_account_ref??null, g:!!c.grant_on_any_relation,
   r:c.grant_on_any_relation?[]:(c.groups||[]) }); }
+// Every change to the rule on screen lands here, so the count follows it.
 function recomputeDirty(){ if(!state||!state._edit||!state.config) return;
-  setDirty(ruleKey(state._edit)!==ruleKey(state.config)); }
+  setDirty(ruleKey(state._edit)!==ruleKey(state.config)); runAutoPreview(); }
 
 function c(t,o,v){ return {target:t,operator:o,value:v,value_end:null}; }
 function targetByKey(k){ return state.targets.find(t=>t.key===k); }
@@ -202,7 +221,7 @@ async function load(){
     state._catalog={};
     state._preset=detectPreset(state._edit);
     state._n=guessAmount(state._edit);
-    render(); prefetchCatalog(); autoPreview();
+    render(); prefetchCatalog(); runAutoPreview(); watchImport();
   }catch(e){ document.getElementById('app').innerHTML=
     `<div class="toast e">Network error: ${esc(String(e))}</div>`; }
 }
@@ -236,6 +255,86 @@ async function getCatalog(accId){ if(!accId) return {products:[],prices:[]};
   return state._catalog[accId]; }
 function prefetchCatalog(){ const a=activeAccount(); if(a){ getCatalog(a.id).then(()=>{ if(state._preset==='custom'||state._preset==='product') render(); }); } }
 
+/* A select over Stripe's catalog that still shows a saved choice Stripe no
+   longer lists (an archived product or price), instead of quietly showing
+   the first one while the rule keeps the old id. */
+function catalogOptions(items,cur){
+  const known=items.some(o=>o.id===cur);
+  const lost=cur&&!known?`<option value="${esc(cur)}" selected>Archived or not found (${esc(cur)})</option>`:'';
+  return lost+items.map(o=>`<option value="${esc(o.id)}" ${o.id===cur?'selected':''}>${esc(o.name)}</option>`).join('');
+}
+
+/* ---------- the count under the rule ----------
+   It previews the rule on screen (POST /preview), not the saved one, a
+   moment after each change; it stays blank while the rule is unfinished,
+   and survives a re-render of the page. */
+let previewTimer=null, previewSeq=0, countText='';
+function setCount(html){ countText=html; const el=document.getElementById('count'); if(el) el.innerHTML=html; postHeight(); }
+function countHtml(d,unsaved){ const n=Number(d.linked)||0;
+  return `<span class="ok">${d.matching}</span> of ${n} linked member${n===1?'':'s'} match`+
+    (unsaved?` · <span class="unsaved">Preview of unsaved rule</span>`:''); }
+function condReady(cc){ const t=targetByKey(cc.target), op=opByKey(cc.operator)||{}; if(!t) return false;
+  if(t.kind==='bool') return typeof cc.value==='boolean';
+  if(op.value_is_list) return Array.isArray(cc.value)&&cc.value.length>0;
+  if(cc.value===''||cc.value==null) return false;
+  if(op.needs_value_end) return cc.value_end!==''&&cc.value_end!=null;
+  return true; }
+function ruleReady(cfg){ if(cfg.grant_on_any_relation) return true;
+  const g=cfg.groups||[]; return g.length>0&&g.every(x=>(x.conditions||[]).length>0&&x.conditions.every(condReady)); }
+function payloadOf(cfg){ return { stripe_account_ref:cfg.stripe_account_ref, grant_on_any_relation:cfg.grant_on_any_relation,
+  groups: cfg.grant_on_any_relation?[]:(cfg.groups||[]) }; }
+function runAutoPreview(){ clearTimeout(previewTimer); previewTimer=setTimeout(doAutoPreview,350); }
+async function doAutoPreview(){
+  const seq=++previewSeq; if(!state) return;
+  if(!activeAccount()){ setCount('Connect your Stripe account to count matching members.'); return; }
+  const cfg=state._edit;
+  if(state._preset===null||!cfg.stripe_account_ref||!ruleReady(cfg)){ setCount(''); return; }
+  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payloadOf(cfg))});
+    const d=await r.json().catch(()=>({}));
+    if(seq!==previewSeq) return;
+    if(!r.ok){ setCount(''); return; }
+    if(d.available===false){ setCount(esc(d.reason||'Preview unavailable.')); return; }
+    setCount(countHtml(d,dirty));
+  }catch(_){ if(seq===previewSeq) setCount(''); }
+}
+async function doPreviewEdit(){
+  const btn=document.getElementById('preview'); if(!btn) return;
+  btn.disabled=true; const orig=btn.textContent; btn.textContent='Previewing…';
+  clearTimeout(previewTimer);
+  try{ await doAutoPreview(); } finally{ btn.disabled=false; btn.textContent=orig; postHeight(); }
+}
+
+/* ---------- account status ---------- */
+function ago(iso){ if(!iso) return ''; const s=Math.max(0,(Date.now()-Date.parse(iso))/1000);
+  if(s<90) return 'just now'; const m=Math.round(s/60); if(m<90) return `${m} minutes ago`;
+  const h=Math.round(m/60); if(h<36) return `${h} hour${h===1?'':'s'} ago`;
+  const d=Math.round(h/24); return `${d} day${d===1?'':'s'} ago`; }
+function importStatus(a){
+  if(!a.last_backfill_at){
+    if(a.import_error) return `<div class="status"><span class="err">Couldn't import from Stripe: ${esc(a.import_error)}</span>
+      <div class="hintmini">Give the key Read on Customers, Subscriptions, Charges, Products, Prices and Checkout Sessions in Stripe,
+        then use <b>Connect another</b> to paste the new key.</div></div>`;
+    return `<div class="status">Importing your customers from Stripe…</div>`;
+  }
+  const n=Number(a.customers)||0, l=Number(a.linked)||0;
+  let s=`<span class="ok">Imported ✓</span> · ${l} of ${n} customer${n===1?'':'s'} linked to a Discord account`;
+  if(n>0&&l===0) s+=`<div class="hintmini warn">None of your customers carry a Discord ID yet — see “How members get linked” below.</div>`;
+  if(a.import_error) s+=`<div class="hintmini warn">The last re-import failed: ${esc(a.import_error)}</div>`;
+  return `<div class="status">${s}</div>`;
+}
+// While an account is still importing, look again every few seconds (for a
+// few minutes), so "Importing…" turns into the result without a reload.
+let importWatch=null, importWatchUntil=0;
+function watchImport(){
+  const pending=(state.accounts||[]).some(a=>!a.last_backfill_at&&!a.import_error);
+  if(!pending){ clearInterval(importWatch); importWatch=null; return; }
+  if(importWatch) return;
+  importWatchUntil=Date.now()+4*60*1000;
+  importWatch=setInterval(()=>{ if(Date.now()>importWatchUntil){ clearInterval(importWatch); importWatch=null; return; }
+    refreshFromServer(); },4000);
+}
+
 function render(){
   const cfg=state._edit, app=document.getElementById('app');
   const accts=state.accounts||[];
@@ -245,6 +344,7 @@ function render(){
   if(needsAccount && acc && String(cfg.stripe_account_ref)!==String(acc.id)){
     cfg.stripe_account_ref=acc.id; recomputeDirty(); }
   const verifyUrl=state.verify_url||(BASE_URL+"/verify");
+  const metaKey=(acc&&acc.discord_metadata_key)||'discord_user_id';
 
   // preset grid
   const opts=presets().map(p=>{
@@ -267,9 +367,11 @@ function render(){
       else if(!cat.products||cat.products.length===0){
         extra=`<div class="extra"><div class="inline">No active products found in this Stripe account.
           Create a product in Stripe (or use <b>Advanced rule</b>). If your key can't read Products, add that permission and reconnect.</div></div>`; }
-      else { const sel=(cfg.groups[0]&&cfg.groups[0].conditions[1])?cfg.groups[0].conditions[1].value:'';
+      else { const pc=cfg.groups[0]&&cfg.groups[0].conditions[1];
+        // A plan picked before the catalog arrived: the first one, as shown.
+        if(pc&&!pc.value){ pc.value=cat.products[0].id; recomputeDirty(); }
         extra=`<div class="extra"><div class="inline">Plan:
-          <select id="prodSel">${cat.products.map(p=>`<option value="${esc(p.id)}" ${p.id===sel?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div></div>`; }
+          <select id="prodSel">${catalogOptions(cat.products,pc?pc.value:'')}</select></div></div>`; }
     }
   }
   else if(cur==='custom') extra=`<div class="extra"><div class="adv" id="rule"></div></div>`;
@@ -285,13 +387,14 @@ function render(){
         <details class="guide" open>
           <summary>How to get your key (about 1 minute)</summary>
           <ol>
-            <li>Open <a href="https://dashboard.stripe.com/apikeys/create" target="_blank" rel="noopener noreferrer">Stripe → Create restricted key</a>. Use the <b>Live / Test</b> toggle (top-right in Stripe) to match how you charge members.</li>
+            <li>Open <a href="https://dashboard.stripe.com/apikeys/create" target="_blank" rel="noopener noreferrer">Stripe → Create restricted key</a>,
+              in the account you take members' payments with: live for real subscribers, a sandbox while you test.</li>
             <li>Give it a name like <code>RoleLogic</code>.</li>
             <li>Set these permissions to <b>Read</b>, and leave everything else on <b>None</b>:
-              <b>Customers</b>, <b>Subscriptions</b>, <b>Charges</b>, <b>Products</b>, <b>Prices</b>
+              <b>Customers</b>, <b>Subscriptions</b>, <b>Charges</b>, <b>Products</b>, <b>Prices</b>, <b>Checkout Sessions</b>
               <span style="color:#7a8497">(optional: <b>Account</b> — just shows your business name).</span></li>
-            <li>Click <b>Create key</b>, then <b>Reveal</b> and copy it — it starts with
-              <code>rk_live_</code> or <code>rk_test_</code>.</li>
+            <li>Click <b>Create key</b>, confirm with the code Stripe sends you, then click the key to copy it —
+              it starts with <code>rk_live_</code> or <code>rk_test_</code>. Stripe shows a live key only once.</li>
             <li>Paste it below and press <b>Connect Stripe</b>.</li>
           </ol>
         </details>
@@ -309,15 +412,21 @@ function render(){
   } else {
     const sel=acc;
     const picker = accts.length>1 ? `<select id="acctSel">${accts.map(a=>`<option value="${a.id}" ${String(a.id)===String(sel.id)?'selected':''}>${esc(a.display_name)}</option>`).join('')}</select>` : '';
+    const confirming=String(state._confirmDisconnect)===String(sel.id);
     acctBlk=`<div class="blk"><label class="h">Stripe account</label>
       <div class="acct">
         <div class="row" style="justify-content:space-between">
           <div><b>${esc(sel.display_name)}</b>
             <span class="badge ${sel.livemode?'live':'test'}">${sel.livemode?'LIVE':'TEST'}</span>
             ${sel.country?`<span style="color:#8a93a4"> · ${esc(sel.country)}</span>`:''}</div>
-          <div class="row">${picker}<button id="addAccount">Connect another</button></div>
+          <div class="row">${picker}<button id="addAccount">Connect another</button>
+            <button id="disconnect" class="ghost">Disconnect</button></div>
         </div>
-        <div class="hintmini" style="margin-top:6px">${sel.last_backfill_at?'Imported ✓':'Importing your subscribers…'}${sel.webhook_configured?' · webhook active ✓':' · no webhook yet'}</div>
+        ${importStatus(sel)}
+        ${confirming?`<div class="confirm">Disconnect <b>${esc(sel.display_name)}</b> from this server? Its imported
+          customers are deleted here, and roles that use it are taken from everyone until you connect it again.
+          Nothing changes in Stripe.
+          <div class="row"><button id="disconnectYes" class="danger">Disconnect</button><button id="disconnectNo">Keep it</button></div></div>`:''}
         ${webhookHelp(sel)}
       </div></div>`;
   }
@@ -330,14 +439,26 @@ function render(){
     ${extra}
     ${acctBlk}
     <div class="share"><b>How members get linked:</b> automatically. Their Discord ID travels with their
-      Stripe subscription (<code>metadata.discord_user_id</code> / checkout <code>client_reference_id</code>),
+      Stripe subscription (<code>metadata.${esc(metaKey)}</code> / checkout <code>client_reference_id</code>),
       so there's nothing for them to do. Members can check their status here:
       <div class="copybox"><code id="vurl">${esc(verifyUrl)}</code>
         <a class="btn" style="text-decoration:none;display:inline-flex;align-items:center;padding:8px 13px;background:#262b36;border-radius:7px;color:#e8eaed" href="${esc(verifyUrl)}" target="_blank" rel="noopener">Open</a>
         <button id="copyv">Copy</button></div>
+      <details class="guide" id="devGuide" style="margin:12px 0 0;background:#12122a;border-color:#2b2b52">
+        <summary>For developers: put the Discord ID on your checkout</summary>
+        <pre class="snippet"><span class="k">await</span> stripe.checkout.sessions.create({
+  mode: <span class="s">"subscription"</span>,
+  line_items: [{ price, quantity: 1 }],
+  client_reference_id: discordUserId,
+  subscription_data: { metadata: { ${esc(metaKey)}: discordUserId } },
+});</pre>
+        <div class="hintmini">The subscription's metadata is what an import reads; <code>client_reference_id</code> links through the
+          webhook and the Checkout Sessions permission. One-time payments work too when Checkout saves a customer
+          (<code>customer_creation: "always"</code>). Use the buyer's Discord user ID (the long number), not their name.</div>
+      </details>
     </div>
     <div class="foot">
-      <span class="count" id="count"></span>
+      <span class="count" id="count">${countText}</span>
       <div class="foot-btns">
         <button id="preview">Preview</button>
         <button id="save" class="primary" ${dirty?'':'disabled'}>Save</button>
@@ -346,11 +467,14 @@ function render(){
 
   app.querySelectorAll('input[name=who]').forEach(r=>r.addEventListener('change',()=>choose(r.value)));
   const dc=document.getElementById('doConnect'); if(dc) dc.addEventListener('click',connectAccount);
-  const aa=document.getElementById('addAccount'); if(aa) aa.addEventListener('click',()=>{ state._showConnect=true; render(); });
+  const aa=document.getElementById('addAccount'); if(aa) aa.addEventListener('click',()=>{ state._showConnect=true; state._confirmDisconnect=null; render(); });
   const cx=document.getElementById('cancelConnect'); if(cx) cx.addEventListener('click',()=>{ state._showConnect=false; render(); });
+  const dn=document.getElementById('disconnect'); if(dn) dn.addEventListener('click',()=>{ state._confirmDisconnect=acc&&acc.id; render(); });
+  const dy=document.getElementById('disconnectYes'); if(dy) dy.addEventListener('click',disconnectAccount);
+  const dno=document.getElementById('disconnectNo'); if(dno) dno.addEventListener('click',()=>{ state._confirmDisconnect=null; render(); });
   const whs=document.getElementById('whsecSave'); if(whs) whs.addEventListener('click',saveWebhookSecret);
   const as=document.getElementById('acctSel'); if(as) as.addEventListener('change',e=>{
-    cfg.stripe_account_ref=Number(e.target.value); recomputeDirty(); getCatalog(cfg.stripe_account_ref).then(()=>render()); autoPreview(); });
+    cfg.stripe_account_ref=Number(e.target.value); state._confirmDisconnect=null; recomputeDirty(); getCatalog(cfg.stripe_account_ref).then(()=>render()); });
   wireCopy('copyv', verifyUrl);
   const wa=document.getElementById('whaleAmt'); if(wa) wa.addEventListener('input',e=>{ state._n=Math.max(1,Number(e.target.value)||1); applyPreset('whale'); });
   const ps=document.getElementById('prodSel'); if(ps) ps.addEventListener('change',()=>applyPreset('product'));
@@ -365,38 +489,56 @@ function webhookHelp(a){
   const events=state.webhook_events||[];
   const evt=events.map(e=>`<li>${esc(e)}</li>`).join('');
   const configured=!!a.webhook_configured;
-  // Step-by-step form. Open by default only when no secret is saved yet;
-  // once linked it collapses into an optional "replace secret" panel.
+  const issue=a.webhook_issue||null;
+  // Step-by-step form. Open by default only when no secret is saved yet or
+  // something is wrong; once working it collapses into an optional
+  // "replace secret" panel.
   const form=`
-    <details class="guide" ${configured?'':'open'} style="margin-top:8px;background:#0b1320">
+    <details class="guide" ${configured&&!issue?'':'open'} style="margin-top:8px;background:#0b1320">
       <summary>${configured
         ? 'Replace the webhook or update its signing secret'
         : 'How to set up the webhook &amp; get your signing secret (whsec_…)'}</summary>
       <ol>
-        <li>Open <a href="https://dashboard.stripe.com/webhooks/create" target="_blank" rel="noopener noreferrer">Stripe → Add a webhook endpoint</a> (use the same <b>Live / Test</b> mode as your key).</li>
-        <li>Set <b>Endpoint URL</b> to this (copy it):
-          <div class="copybox"><code>${esc(a.webhook_url)}</code>
-            <button data-copy="${esc(a.webhook_url)}">Copy</button></div></li>
-        <li>Under <b>Select events</b>, add these ${events.length} events:
+        <li>Open <a href="https://dashboard.stripe.com/workbench/webhooks" target="_blank" rel="noopener noreferrer">Stripe → Workbench → Webhooks</a>
+          and click <b>Create an event destination</b> (same account and mode as your key).</li>
+        <li>Choose <b>Your account</b>, and the <b>Snapshot</b> payload — not Thin: this plugin reads the subscription inside each event.</li>
+        <li>Select these ${events.length} events:
           <ul class="events">${evt}</ul></li>
-        <li>Click <b>Add endpoint</b>. On the endpoint's page, find <b>Signing secret</b> → click <b>Reveal</b> → copy the <code>whsec_…</code> value.</li>
-        <li>Paste it here and save:
+        <li>Choose <b>Webhook endpoint</b>, set its <b>Endpoint URL</b> to this (copy it), then create the destination:
+          <div class="copybox"><code>${esc(a.webhook_url)}</code>
+            <button id="copywh" data-copy="${esc(a.webhook_url)}">Copy</button></div></li>
+        <li>On the destination's page, click <b>Reveal</b> next to <b>Signing secret</b>, copy the <code>whsec_…</code> value,
+          and paste it here:
           <div class="copybox">
             <input id="whsecInput" type="password" placeholder="whsec_…" autocomplete="off" style="flex:1;min-width:0">
             <button id="whsecSave" class="primary" style="padding:8px 14px">Save secret</button></div></li>
       </ol>
     </details>`;
+  if(issue==='signature') return `<div class="wh bad">
+      <b>Stripe's last delivery didn't match this signing secret</b>
+      <div class="hintmini" style="margin-top:4px">Copy the signing secret from the destination's page again and save it below.
+        Each destination has its own secret, and a sandbox's differs from live.</div>
+      ${form}</div>`;
+  if(issue==='thin') return `<div class="wh bad">
+      <b>This destination sends Thin events</b>
+      <div class="hintmini" style="margin-top:4px">Thin events carry nothing to read. Create the destination again with the
+        <b>Snapshot</b> payload, and save its signing secret below.</div>
+      ${form}</div>`;
   if(configured){
-    // Linked: don't push the whole form — just confirm it's on, with the
-    // replace panel tucked away (collapsed) for anyone who needs to rotate it.
+    // Working (or waiting for the first event): don't push the whole form —
+    // just say what we've seen, with the replace panel tucked away.
+    const seen=a.webhook_last_ok_at
+      ? `Last event from Stripe ${ago(a.webhook_last_ok_at)} — subscription changes apply within seconds.`
+      : `Waiting for Stripe's first event — it arrives with the next change to a customer or subscription.`;
     return `<div class="wh">
       <b>Real-time updates are on ✓</b>
-      <div class="hintmini" style="margin-top:4px">Webhook connected — subscription changes apply within seconds.</div>
+      <div class="hintmini" style="margin-top:4px">${seen}</div>
       ${form}
     </div>`;
   }
   return `<div class="wh">
     <b>Turn on real-time updates (recommended)</b>
+    ${issue==='no_secret'?`<div class="hintmini" style="margin-top:4px;color:#fbbf24">Stripe is already sending events here — save the signing secret to start using them.</div>`:''}
     ${form}
     <div class="hintmini">No signing secret yet — roles still reconcile every few hours until you add it above.</div>
   </div>`;
@@ -418,8 +560,22 @@ async function saveWebhookSecret(){
   }catch(e){ postToast('Network error: '+e); if(b){b.disabled=false;b.textContent='Save secret';} }
 }
 
+async function disconnectAccount(){
+  const acc=activeAccount(); if(!acc) return;
+  const b=document.getElementById('disconnectYes'); if(b){ b.disabled=true; b.textContent='Disconnecting…'; }
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/accounts/${acc.id}`,
+      {method:'DELETE',headers:apiHeaders(),credentials:apiCreds()});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ postToast(d.error||'Could not disconnect.'); if(b){b.disabled=false;b.textContent='Disconnect';} return; }
+    state._confirmDisconnect=null;
+    postToast(`${acc.display_name} disconnected.`,'success');
+    await refreshFromServer(true);
+  }catch(e){ postToast('Network error: '+e); if(b){b.disabled=false;b.textContent='Disconnect';} }
+}
+
 function choose(id){ state._preset=id; applyPreset(id); render(); }
-function applyPreset(id,skipRender){
+function applyPreset(id){
   const p=presets().find(x=>x.id===id); const cfg=state._edit;
   if(id==='custom'){
     cfg.grant_on_any_relation=false;
@@ -433,7 +589,6 @@ function applyPreset(id,skipRender){
     cfg.groups=r.groups.map(cs=>({conditions:cs}));
   }
   recomputeDirty();
-  if(!skipRender && (id==='whale'||id==='product')){ autoPreview(); }
 }
 
 /* ---------- advanced builder ---------- */
@@ -452,7 +607,10 @@ function renderRule(){
       <button data-ac="${gi}" style="margin-top:6px">+ condition</button>
     </div>`).join('')+`<button id="ag" style="margin-top:8px">+ OR group</button>`;
   box.querySelectorAll('[data-dg]').forEach(b=>b.onclick=()=>{ cfg.groups.splice(+b.dataset.dg,1); recomputeDirty(); renderRule(); postHeight(); });
-  box.querySelectorAll('[data-ac]').forEach(b=>b.onclick=()=>{ cfg.groups[+b.dataset.ac].conditions.push(c('has_active_subscription','eq',true)); recomputeDirty(); renderRule(); postHeight(); });
+  box.querySelectorAll('[data-ac]').forEach(b=>b.onclick=()=>{
+    const g=cfg.groups[+b.dataset.ac];
+    if(g.conditions.length>=state.limits.max_conditions_per_group){ postToast(`At most ${state.limits.max_conditions_per_group} conditions per group.`); return; }
+    g.conditions.push(c('has_active_subscription','eq',true)); recomputeDirty(); renderRule(); postHeight(); });
   const ag=document.getElementById('ag'); if(ag) ag.onclick=()=>{
     if(cfg.groups.length>=state.limits.max_groups){ postToast(`Max ${state.limits.max_groups} groups.`); return; }
     cfg.groups.push({conditions:[c('has_active_subscription','eq',true)]}); recomputeDirty(); renderRule(); postHeight(); };
@@ -485,20 +643,25 @@ function valWidget(tgt,cc){
     const opt=it=>{ const id=it.id; const name=tgt.picker==='product'?it.name:(it.nickname||id)+(it.unit_amount_cents!=null?` ($${(it.unit_amount_cents/100).toFixed(2)}${it.interval?'/'+it.interval:''})`:''); return {id,name}; };
     const items=list.map(opt);
     if(op.value_is_list){ const cur=Array.isArray(cc.value)?cc.value:[];
-      return `<select class="v" multiple size="${Math.min(5,Math.max(2,items.length))}">${items.map(o=>`<option value="${esc(o.id)}" ${cur.includes(o.id)?'selected':''}>${esc(o.name)}</option>`).join('')}</select>`; }
-    return `<select class="v">${items.map(o=>`<option value="${esc(o.id)}" ${o.id===cc.value?'selected':''}>${esc(o.name)}</option>`).join('')||'<option value="">(none found)</option>'}</select>`;
+      const lost=cur.filter(id=>!items.some(o=>o.id===id)).map(id=>({id,name:`Archived or not found (${id})`}));
+      const all=[...lost,...items];
+      return `<select class="v" multiple size="${Math.min(5,Math.max(2,all.length))}">${all.map(o=>`<option value="${esc(o.id)}" ${cur.includes(o.id)?'selected':''}>${esc(o.name)}</option>`).join('')}</select>`; }
+    // An empty pick shows the first item: make the rule say so too.
+    if(!cc.value&&items[0]){ cc.value=items[0].id; recomputeDirty(); }
+    return `<select class="v">${catalogOptions(items,cc.value)}</select>`;
   }
   // choices (status / interval)
   if(tgt.choices){ if(op.value_is_list){ const cur=Array.isArray(cc.value)?cc.value:[];
       return `<select class="v" multiple size="${Math.min(5,tgt.choices.length)}">${tgt.choices.map(o=>`<option value="${o}" ${cur.includes(o)?'selected':''}>${o}</option>`).join('')}</select>`; }
+    if(!cc.value){ cc.value=tgt.choices[0]; recomputeDirty(); }
     return `<select class="v">${tgt.choices.map(o=>`<option value="${o}" ${o===cc.value?'selected':''}>${o}</option>`).join('')}</select>`; }
   // list (free text)
   if(op.value_is_list) return `<input type="text" class="v" placeholder="a, b, c" value="${esc(Array.isArray(cc.value)?cc.value.join(', '):'')}">`;
   // between
-  if(op.needs_value_end){ if(tgt.is_money) return `$<input type="number" class="v" placeholder="min" value="${cc.value!=null?dollars(cc.value):''}"> and $<input type="number" class="ve" placeholder="max" value="${cc.value_end!=null?dollars(cc.value_end):''}">`;
+  if(op.needs_value_end){ if(tgt.is_money) return `$<input type="number" class="v" placeholder="min" value="${cc.value!=null&&cc.value!==''?dollars(cc.value):''}"> and $<input type="number" class="ve" placeholder="max" value="${cc.value_end!=null?dollars(cc.value_end):''}">`;
     return `<input type="number" class="v" placeholder="min" value="${cc.value??''}"> and <input type="number" class="ve" placeholder="max" value="${cc.value_end??''}">`; }
   // money
-  if(tgt.is_money) return `<span class="pfx">$</span><input type="number" class="v" value="${cc.value!=null?dollars(cc.value):''}">`;
+  if(tgt.is_money) return `<span class="pfx">$</span><input type="number" class="v" value="${cc.value!=null&&cc.value!==''?dollars(cc.value):''}">`;
   // int
   if(tgt.kind==='int') return `<input type="number" class="v" value="${cc.value??''}">`;
   // string
@@ -509,7 +672,7 @@ function wireCond(row){
   row.querySelector('.t').onchange=e=>{ cc.target=e.target.value; const t=targetByKey(cc.target);
     if(t.kind==='bool'){ cc.operator='eq'; cc.value=true; }
     else { const v=opsForKind(t.kind); if(!v.find(x=>x.key===cc.operator)) cc.operator=v[0].key;
-      cc.value=(t.kind==='string_list'||t.picker||t.choices)?'':(t.kind==='int'?'':''); if((opByKey(cc.operator)||{}).value_is_list) cc.value=[]; }
+      cc.value=''; if((opByKey(cc.operator)||{}).value_is_list) cc.value=[]; }
     cc.value_end=null; recomputeDirty(); renderRule(); postHeight(); };
   const bv=row.querySelector('.bv'); if(bv) bv.onchange=e=>{ cc.operator='eq'; cc.value=e.target.value==='1'; recomputeDirty(); };
   const o=row.querySelector('.o'); if(o) o.onchange=e=>{ cc.operator=e.target.value;
@@ -517,11 +680,12 @@ function wireCond(row){
     cc.value_end=null; recomputeDirty(); renderRule(); postHeight(); };
   row.querySelectorAll('.v,.ve').forEach(inp=>{ const ev=inp.tagName==='SELECT'?'change':'input';
     inp.addEventListener(ev,()=>{ const t=targetByKey(cc.target),op=opByKey(cc.operator)||{};
-      if(inp.classList.contains('ve')) cc.value_end = t.is_money?cents(inp.value):(inp.value===''?null:Number(inp.value));
+      const blank=inp.value.trim()==='';
+      if(inp.classList.contains('ve')) cc.value_end = blank?null:(t.is_money?cents(inp.value):Number(inp.value));
       else if(inp.multiple) cc.value=Array.from(inp.selectedOptions).map(o=>o.value);
       else if(op.value_is_list) cc.value=inp.value.split(',').map(s=>s.trim()).filter(Boolean);
-      else if(t.is_money) cc.value=cents(inp.value);
-      else if(t.kind==='int') cc.value=inp.value===''?'':Number(inp.value);
+      else if(t.is_money) cc.value=blank?'':cents(inp.value);
+      else if(t.kind==='int') cc.value=blank?'':Number(inp.value);
       else cc.value=inp.value; recomputeDirty(); }); });
   row.querySelector('[data-del]').onclick=()=>{ cfg.groups[gi].conditions.splice(ci,1);
     if(cfg.groups[gi].conditions.length===0) cfg.groups.splice(gi,1);
@@ -541,38 +705,17 @@ async function connectAccount(){
     const d=await r.json().catch(()=>({}));
     if(!r.ok){ postToast(d.error||'Could not connect Stripe.'); if(cc){cc.disabled=false;cc.textContent='Connect Stripe';} return; }
     state._showConnect=false;
+    // A rule already chosen uses the account just connected.
+    if(d.account&&d.account.id&&state._preset!==null) state._edit.stripe_account_ref=d.account.id;
     postToast('Stripe connected ✓ Importing your subscribers — next, add the webhook below for instant updates.','success');
     await refreshFromServer(true);
   }catch(e){ postToast('Connect error: '+e); const b=document.getElementById('doConnect'); if(b){b.disabled=false;b.textContent='Connect Stripe';} }
 }
 
-async function doPreview(){ const el=document.getElementById('count'); if(!el) return;
-  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
-      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
-    const d=await r.json(); if(!r.ok||d.available===false){ el.textContent=''; return; }
-    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`+(dirty?` · <span style="color:#fbbf24">Save to apply</span>`:``);
-  }catch(_){ el.textContent=''; } postHeight(); }
-function autoPreview(){ doPreview(); }
-async function doPreviewEdit(){
-  const el=document.getElementById('count'); const btn=document.getElementById('preview'); if(!btn) return;
-  const cfg=state._edit;
-  const payload={ stripe_account_ref:cfg.stripe_account_ref, grant_on_any_relation:cfg.grant_on_any_relation,
-    groups: cfg.grant_on_any_relation?[]:(cfg.groups||[]) };
-  btn.disabled=true; const orig=btn.textContent; btn.textContent='Previewing…';
-  try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
-      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payload)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok){ postToast(d.error||('Preview failed (HTTP '+r.status+')')); return; }
-    if(d.available===false){ el.textContent=d.reason||'Preview unavailable.'; postHeight(); return; }
-    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`+(dirty?` · <span style="color:#fbbf24">Preview of unsaved rule</span>`:``);
-  }catch(e){ postToast('Network error: '+e); }
-  finally{ btn.disabled=false; btn.textContent=orig; postHeight(); }
-}
 async function doSave(){
   const cfg=state._edit;
   if(!cfg.stripe_account_ref){ postToast('Connect a Stripe account first — without one this grants the role to nobody.'); return; }
-  const payload={ rule_tree_version:state.rule_tree_version, stripe_account_ref:cfg.stripe_account_ref,
-    grant_on_any_relation:cfg.grant_on_any_relation, groups: cfg.grant_on_any_relation?[]:(cfg.groups||[]) };
+  const payload=Object.assign({ rule_tree_version:state.rule_tree_version }, payloadOf(cfg));
   try{ const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/save`,
       {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payload)});
     const d=await r.json().catch(()=>({}));
@@ -580,7 +723,7 @@ async function doSave(){
     if(!r.ok){ postToast(d.error||('Save failed (HTTP '+r.status+')')); return; }
     state.rule_tree_version=d.rule_tree_version; state.config=JSON.parse(JSON.stringify(cfg));
     setDirty(false); postSaved();
-    postToast('Saved ✓ Roles update within a minute.','success'); autoPreview();
+    postToast('Saved ✓ Roles update within a minute.','success'); runAutoPreview();
   }catch(e){ postToast('Network error: '+e); }
 }
 
@@ -594,7 +737,12 @@ async function refreshFromServer(force){
       if(acCh) state.accounts=d.accounts;
       if(cfgCh&&!dirty){ state.config=d.config; state._edit=JSON.parse(JSON.stringify(d.config));
         state.rule_tree_version=d.rule_tree_version; state._preset=detectPreset(state._edit); state._n=guessAmount(state._edit); }
-      if(force||acCh||(cfgCh&&!dirty)){ render(); prefetchCatalog(); autoPreview(); } }
+      // An account that went away (disconnected here or in another tab)
+      // can't stay picked in an unsaved rule.
+      if(state._edit.stripe_account_ref&&!(state.accounts||[]).some(a=>String(a.id)===String(state._edit.stripe_account_ref)))
+        state._edit.stripe_account_ref=null;
+      if(force||acCh||(cfgCh&&!dirty)){ render(); prefetchCatalog(); recomputeDirty(); }
+      watchImport(); }
   }catch(_){}
   finally{ refreshInFlight=false; }
 }

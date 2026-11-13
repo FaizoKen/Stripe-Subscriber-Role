@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::AppError;
-use crate::services::stripe::StripeClient;
+use crate::services::stripe::{self, StripeClient};
 use crate::services::{crypto, ingest, jobs, sync};
 use crate::tasks::shutdown::ShutdownGuard;
 use crate::AppState;
@@ -73,7 +73,35 @@ pub fn decrypt_key(state: &AppState, enc: &[u8]) -> Result<String, AppError> {
 }
 
 /// Full import of one account from Stripe. Idempotent — safe to re-run.
+///
+/// A failure is kept on the account (`last_import_error`, Stripe's own
+/// message) so the settings page can say why — a missing permission, a
+/// revoked key — instead of "Importing…" forever. The next import that
+/// succeeds clears it.
 pub async fn import_account(
+    state: &Arc<AppState>,
+    account_ref: i64,
+    mark_backfill: bool,
+) -> Result<(), AppError> {
+    let result = import_inner(state, account_ref, mark_backfill).await;
+    let error = result.as_ref().err().map(stripe::readable_error);
+    let _ = sqlx::query(
+        "UPDATE stripe_accounts SET last_import_error = $2, \
+            last_import_error_at = CASE WHEN $2::text IS NULL THEN NULL ELSE now() END \
+         WHERE id = $1",
+    )
+    .bind(account_ref)
+    .bind(&error)
+    .execute(&state.pool)
+    .await;
+    result
+}
+
+/// How far back a routine reconcile reads Checkout Sessions (the first
+/// import reads them all): far enough to cover a webhook that never came.
+const CHECKOUT_LOOKBACK_SECS: i64 = 7 * 24 * 60 * 60;
+
+async fn import_inner(
     state: &Arc<AppState>,
     account_ref: i64,
     mark_backfill: bool,
@@ -112,6 +140,39 @@ pub async fn import_account(
             ingest::upsert_customer(&state.pool, account_ref, c, &metadata_key).await?
         {
             touched.insert(did);
+        }
+    }
+
+    // 2b. Completed checkouts that carried the Discord ID only on the session
+    //     (`client_reference_id` or session metadata): link the subscription
+    //     and customer they created. Best-effort — the key may not grant
+    //     Checkout Sessions read; subscription/customer metadata still link.
+    let since = (!mark_backfill).then(|| chrono::Utc::now().timestamp() - CHECKOUT_LOOKBACK_SECS);
+    match client.list_checkout_links(&key, since).await {
+        Ok(links) => {
+            for l in &links {
+                let Some(did) = ingest::checkout_discord_id(
+                    &l.metadata,
+                    l.client_reference_id.as_deref(),
+                    &metadata_key,
+                ) else {
+                    continue;
+                };
+                if let Some(d) = ingest::apply_checkout_link(
+                    &state.pool,
+                    account_ref,
+                    &did,
+                    l.customer_id.as_deref(),
+                    l.subscription_id.as_deref(),
+                )
+                .await?
+                {
+                    touched.insert(d);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::info!(account_ref, "checkout-session links skipped: {e}");
         }
     }
 

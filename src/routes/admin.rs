@@ -39,6 +39,7 @@ const WEBHOOK_EVENTS: &[&str] = &[
     "customer.updated",
     "customer.deleted",
     "charge.succeeded",
+    "charge.refunded",
     "invoice.payment_failed",
 ];
 
@@ -57,6 +58,23 @@ pub struct AccountRow {
     pub webhook_configured: bool,
     pub last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_backfill_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub webhook_last_ok_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub webhook_last_failed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub webhook_last_error: Option<String>,
+    pub last_import_error: Option<String>,
+    /// Customers imported from Stripe, and how many of them carry a Discord ID.
+    pub customers: i64,
+    pub linked: i64,
+}
+
+/// What, if anything, is wrong with an account's webhook right now: the
+/// last refusal, while it is newer than the last delivery that worked.
+fn webhook_issue(a: &AccountRow) -> Option<&str> {
+    let failed = a.webhook_last_failed_at?;
+    if a.webhook_last_ok_at.is_some_and(|ok| ok >= failed) {
+        return None;
+    }
+    a.webhook_last_error.as_deref()
 }
 
 fn account_json(state: &AppState, a: &AccountRow) -> Value {
@@ -69,14 +87,23 @@ fn account_json(state: &AppState, a: &AccountRow) -> Value {
         "discord_metadata_key": a.discord_metadata_key,
         "webhook_configured": a.webhook_configured,
         "webhook_url": format!("{}/webhooks/stripe/{}", state.config.base_url, a.id),
+        "webhook_last_ok_at": a.webhook_last_ok_at,
+        "webhook_issue": webhook_issue(a),
         "last_synced_at": a.last_synced_at,
         "last_backfill_at": a.last_backfill_at,
+        "import_error": a.last_import_error,
+        "customers": a.customers,
+        "linked": a.linked,
     })
 }
 
 const ACCOUNT_SELECT: &str = "SELECT id, stripe_account_id, display_name, country, livemode, \
     discord_metadata_key, (webhook_secret_enc IS NOT NULL) AS webhook_configured, \
-    last_synced_at, last_backfill_at FROM stripe_accounts";
+    last_synced_at, last_backfill_at, webhook_last_ok_at, webhook_last_failed_at, \
+    webhook_last_error, last_import_error, \
+    (SELECT count(*) FROM stripe_customers c WHERE c.account_ref = stripe_accounts.id) AS customers, \
+    (SELECT count(*) FROM stripe_member_facts f WHERE f.account_ref = stripe_accounts.id) AS linked \
+    FROM stripe_accounts";
 
 async fn load_accounts(state: &AppState, guild_id: &str) -> Result<Vec<AccountRow>, AppError> {
     let rows = sqlx::query_as::<_, AccountRow>(&format!(
@@ -219,13 +246,14 @@ pub async fn account_disconnect(
     let mut tx = state.pool.begin().await?;
     // Unbind any role links pointing at this account so a later save doesn't
     // reference a deleted account.
-    sqlx::query(
+    let unbound: Vec<String> = sqlx::query_scalar(
         "UPDATE role_links SET stripe_account_ref = NULL, updated_at = now() \
-         WHERE guild_id = $1 AND stripe_account_ref = $2",
+         WHERE guild_id = $1 AND stripe_account_ref = $2 \
+         RETURNING role_id",
     )
     .bind(&guild_id)
     .bind(account_ref)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
 
     // CASCADE drops the account's customers/subscriptions/member_facts.
@@ -235,6 +263,19 @@ pub async fn account_disconnect(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+
+    // A role with no account grants nobody: re-sync each one that used it,
+    // or its members keep the role (the reconcile only walks accounts that
+    // still exist, so nothing else would ever look at these links again).
+    for role_id in &unbound {
+        if let Err(e) = jobs::enqueue_config_sync(&state.pool, &guild_id, role_id).await {
+            tracing::warn!(
+                guild_id,
+                role_id,
+                "enqueue config_sync after disconnect failed: {e}"
+            );
+        }
+    }
 
     Ok(Json(json!({ "removed": result.rows_affected() > 0 })))
 }
@@ -276,8 +317,11 @@ pub async fn account_set_webhook_secret(
     }
 
     let enc = crypto::encrypt(&state.config.session_secret, secret.as_bytes());
+    // A new secret starts with a clean slate: a refusal recorded under the
+    // old one says nothing about this one.
     let result = sqlx::query(
-        "UPDATE stripe_accounts SET webhook_secret_enc = $1, updated_at = now() \
+        "UPDATE stripe_accounts SET webhook_secret_enc = $1, updated_at = now(), \
+            webhook_last_failed_at = NULL, webhook_last_error = NULL \
          WHERE id = $2 AND guild_id = $3",
     )
     .bind(&enc)

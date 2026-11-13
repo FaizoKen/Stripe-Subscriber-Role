@@ -61,6 +61,7 @@ pub async fn run_migrations(pool: &PgPool) {
         ("005", include_str!("../migrations/005_member_facts.sql")),
         ("006", include_str!("../migrations/006_webhooks.sql")),
         ("007", include_str!("../migrations/007_jobs.sql")),
+        ("008", include_str!("../migrations/008_webhook_health.sql")),
     ];
     for (id, sql) in migrations {
         sqlx::raw_sql(sql)

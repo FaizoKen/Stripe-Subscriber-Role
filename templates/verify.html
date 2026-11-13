@@ -20,14 +20,17 @@
   .btn:hover { background:#544cff; }
   .btn.sec { background:#262b36; }
   .btn.sec:hover { background:#313845; }
+  .btn:disabled { opacity:.6; cursor:default; }
   .sub-item { display:flex; justify-content:space-between; align-items:center; gap:10px;
     padding:10px 0; border-bottom:1px solid #20242e; }
   .sub-item:last-child { border-bottom:0; }
-  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; }
+  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; white-space:nowrap; }
   .badge.active { background:#10331f; color:var(--ok); }
   .badge.trial { background:#3a2c10; color:#fbbf24; }
+  .badge.due { background:#3a2c10; color:#fbbf24; }
   .badge.off { background:#2a1518; color:#f6b8c0; }
   .muted { color:#8a93a4; font-size:13px; }
+  .note { color:#fbbf24; font-size:13px; margin-top:2px; }
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px; }
   code { background:#0b0d12; padding:1px 5px; border-radius:4px; font-size:12.5px; }
   .toast { padding:10px 12px; border-radius:8px; font-size:14px; margin-top:12px; }
@@ -40,44 +43,70 @@
 <div class="wrap" id="app"><p class="sub">Loading…</p></div>
 <script>
 const BASE_URL="{{BASE_URL}}";
+// Opened from a server's link (?guild=…): show that server's subscriptions,
+// and come back to it after signing in.
+const GUILD=(new URLSearchParams(location.search).get('guild')||'').replace(/\D/g,'');
+const QS=GUILD?`?guild=${GUILD}`:'';
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function money(c,cur){ if(c==null) return ''; const v=(Number(c)/100).toFixed(2);
-  return (cur?cur.toUpperCase()+' ':'$')+v; }
+// An amount in the currency's smallest unit, in that currency ($5.00, ¥500).
+function money(c,cur){ if(c==null) return ''; const code=(cur||'usd').toUpperCase();
+  try{ const f=new Intl.NumberFormat(undefined,{style:'currency',currency:code});
+    return f.format(Number(c)/Math.pow(10,f.resolvedOptions().maximumFractionDigits)); }
+  catch(_){ return code+' '+(Number(c)/100).toFixed(2); } }
+function day(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }catch(_){ return ''; } }
+const PER={day:'day',week:'week',month:'month',year:'year'};
+const STATUS={canceled:'Canceled',unpaid:'Unpaid',paused:'Paused',incomplete:'Waiting for the first payment',
+  incomplete_expired:'Checkout not completed',past_due:'Past due'};
 
 async function load(){
   let d;
-  try{ const r=await fetch(`${BASE_URL}/verify/status`,{credentials:'include',cache:'no-store'});
+  try{ const r=await fetch(`${BASE_URL}/verify/status${QS}`,{credentials:'include',cache:'no-store'});
     d=await r.json(); }catch(e){ app().innerHTML=`<div class="toast e">Network error.</div>`; return; }
   render(d);
 }
 function app(){ return document.getElementById('app'); }
 
+/* One subscription line: what it is, and what happens next. */
+function item(m){
+  const plan=m.plan_amount_cents?`${money(m.plan_amount_cents,m.currency)}${m.billing_interval&&PER[m.billing_interval]?' / '+PER[m.billing_interval]:''}`:'';
+  let badge, label, note='';
+  if(m.has_active_subscription&&m.is_trialing){
+    badge=['trial','TRIAL']; label=['Free trial',m.trial_end?`ends ${day(m.trial_end)}`:'',plan].filter(Boolean).join(' · ');
+  } else if(m.has_active_subscription){
+    badge=['active','ACTIVE'];
+    const next=m.cancels_at_period_end?(m.current_period_end?`ends ${day(m.current_period_end)}`:'ends at period end')
+      :(m.current_period_end?`renews ${day(m.current_period_end)}`:'');
+    label=['Active',plan,next].filter(Boolean).join(' · ');
+    if(m.cancels_at_period_end) note='Set to cancel — your role stays until then.';
+  } else if(m.is_past_due||m.status==='past_due'){
+    badge=['due','PAST DUE']; label=['Past due',plan].filter(Boolean).join(' · ');
+    note='A payment failed. Update your card with the seller to keep your subscriber role.';
+  } else {
+    badge=['off','INACTIVE']; label=m.status?(STATUS[m.status]||m.status):'Customer, no subscription';
+  }
+  return `<div class="sub-item">
+    <div><div><b>${esc(m.account)}</b> ${m.livemode?'':'<span class="muted">(test)</span>'}</div>
+      <div class="muted">${esc(label)}</div>${note?`<div class="note">${esc(note)}</div>`:''}</div>
+    <span class="badge ${badge[0]}">${badge[1]}</span></div>`;
+}
+
 function render(d){
   if(!d.signed_in_discord){
     app().innerHTML=`<h1>Your subscription status</h1>
       <p class="sub">Sign in with Discord to see which subscriber roles you qualify for.</p>
-      <form method="POST" action="${BASE_URL}/verify/login"><button class="btn" type="submit">Sign in with Discord</button></form>`;
+      <form method="POST" action="${BASE_URL}/verify/login${QS}"><button class="btn" type="submit">Sign in with Discord</button></form>`;
     return;
   }
   const ms=d.memberships||[];
   let body;
   if(ms.length===0){
-    body=`<div class="card"><b>No Stripe subscription is linked to your Discord yet.</b>
-      <p class="muted" style="margin:8px 0 0">Linking is automatic — when you subscribe, your Discord
-      account is attached to the payment, and your role appears within a minute. If you just subscribed,
-      give it a moment and tap “Re-check”. If you paid with a different email or account, contact the
-      server admin.</p></div>`;
+    body=`<div class="card"><b>No Stripe subscription is linked to your Discord account yet.</b>
+      <p class="muted" style="margin:8px 0 0">Linking is automatic: when you subscribe through the server's checkout,
+      your Discord ID is saved with your payment, and your role arrives within a minute. Just subscribed? Give it a
+      moment, then press “Re-check now”. Paid another way, or while signed in to a different Discord account?
+      Ask the server's admins.</p></div>`;
   } else {
-    body=`<div class="card">${ms.map(m=>{
-      const st=m.has_active_subscription?(m.is_trialing?'trial':'active'):'off';
-      const label=m.has_active_subscription?(m.is_trialing?'Trial':'Active'):(m.status||'Inactive');
-      const plan=m.plan_amount_cents?` · ${money(m.plan_amount_cents,m.currency)}`:'';
-      const cancel=m.cancels_at_period_end?' · cancels at period end':'';
-      return `<div class="sub-item">
-        <div><div><b>${esc(m.account)}</b> ${m.livemode?'':'<span class="muted">(test)</span>'}</div>
-          <div class="muted">${esc(label)}${plan}${cancel}</div></div>
-        <span class="badge ${st}">${st==='active'?'ACTIVE':st==='trial'?'TRIAL':'INACTIVE'}</span></div>`;
-    }).join('')}</div>`;
+    body=`<div class="card">${ms.map(item).join('')}</div>`;
   }
   app().innerHTML=`<h1>Hi ${esc(d.discord_username||'there')} 👋</h1>
     <p class="sub">Your Stripe subscriber roles are granted automatically based on the status below.</p>

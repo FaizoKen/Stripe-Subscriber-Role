@@ -38,13 +38,14 @@ struct RawCustomerRow {
 #[derive(sqlx::FromRow)]
 struct RawSubRow {
     status: String,
-    price_id: Option<String>,
-    product_id: Option<String>,
-    unit_amount_cents: i64,
+    /// Every item's price / product (migration 008), else the first item's.
+    price_ids: Vec<String>,
+    product_ids: Vec<String>,
+    /// One period's charge across all items.
+    period_amount_cents: i64,
     currency: Option<String>,
     interval: Option<String>,
     interval_count: i32,
-    quantity: i32,
     cancel_at_period_end: bool,
     current_period_end: Option<DateTime<Utc>>,
     trial_end: Option<DateTime<Utc>>,
@@ -107,9 +108,15 @@ pub async fn recompute_member_facts(
     .await?;
 
     let subs: Vec<RawSubRow> = sqlx::query_as(
-        "SELECT status, price_id, product_id, unit_amount_cents, currency, interval, \
-                interval_count, quantity, cancel_at_period_end, current_period_end, \
-                trial_end, started_at \
+        "SELECT status, \
+                CASE WHEN cardinality(price_ids) = 0 AND price_id IS NOT NULL \
+                     THEN ARRAY[price_id] ELSE price_ids END AS price_ids, \
+                CASE WHEN cardinality(product_ids) = 0 AND product_id IS NOT NULL \
+                     THEN ARRAY[product_id] ELSE product_ids END AS product_ids, \
+                COALESCE(period_amount_cents, unit_amount_cents * GREATEST(quantity, 1)) \
+                    AS period_amount_cents, \
+                currency, interval, interval_count, cancel_at_period_end, \
+                current_period_end, trial_end, started_at \
          FROM stripe_subscriptions WHERE account_ref = $1 AND discord_id = $2",
     )
     .bind(account_ref)
@@ -152,19 +159,16 @@ pub async fn recompute_member_facts(
         .max_by_key(|s| status_rank(&s.status))
         .map(|s| s.status.clone());
 
-    // "Primary" active sub = highest per-period charge (unit_amount × quantity).
-    let primary = active
-        .iter()
-        .max_by_key(|s| s.unit_amount_cents * s.quantity.max(1) as i64);
-    let plan_amount_cents = primary
-        .map(|s| s.unit_amount_cents * s.quantity.max(1) as i64)
-        .unwrap_or(0);
+    // "Primary" active sub = highest per-period charge (every item's unit
+    // amount × quantity).
+    let primary = active.iter().max_by_key(|s| s.period_amount_cents);
+    let plan_amount_cents = primary.map(|s| s.period_amount_cents).unwrap_or(0);
     let billing_interval = primary.and_then(|s| s.interval.clone());
     let total_mrr_cents: i64 = active
         .iter()
         .map(|s| {
             monthly_value(
-                s.unit_amount_cents * s.quantity.max(1) as i64,
+                s.period_amount_cents,
                 s.interval.as_deref(),
                 s.interval_count,
             )
@@ -175,10 +179,16 @@ pub async fn recompute_member_facts(
     let trial_end = active.iter().filter_map(|s| s.trial_end).min();
     let sub_currency = active.iter().find_map(|s| s.currency.clone());
 
-    let mut product_ids: Vec<String> = active.iter().filter_map(|s| s.product_id.clone()).collect();
+    let mut product_ids: Vec<String> = active
+        .iter()
+        .flat_map(|s| s.product_ids.iter().cloned())
+        .collect();
     product_ids.sort();
     product_ids.dedup();
-    let mut price_ids: Vec<String> = active.iter().filter_map(|s| s.price_id.clone()).collect();
+    let mut price_ids: Vec<String> = active
+        .iter()
+        .flat_map(|s| s.price_ids.iter().cloned())
+        .collect();
     price_ids.sort();
     price_ids.dedup();
 

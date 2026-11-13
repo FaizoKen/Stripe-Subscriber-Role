@@ -111,7 +111,11 @@ fn validate_condition(
         )));
     }
 
-    let value = normalize_value(&where_, target.kind(), operator, raw.value)?;
+    let value = canonical_case(
+        target,
+        operator,
+        normalize_value(&where_, target.kind(), operator, raw.value)?,
+    );
     let value_end = match (operator, raw.value_end) {
         (ConditionOperator::Between, Some(end)) => {
             Some(normalize_value(&where_, target.kind(), operator, end)?)
@@ -146,6 +150,44 @@ fn validate_condition(
     })
 }
 
+/// Write a value the way Stripe stores the fact it is compared with, so a
+/// rule typed in another case still matches: country codes are upper case
+/// ("us" → "US"), currencies lower case ("USD" → "usd"), email domains
+/// lower case without a leading "@" ("@Acme.com" → "acme.com"). A regex is
+/// the admin's own pattern and is left as typed.
+fn canonical_case(target: ConditionTarget, op: ConditionOperator, v: Value) -> Value {
+    if matches!(op, ConditionOperator::Regex) {
+        return v;
+    }
+    let fix = |s: &str| -> String {
+        let t = s.trim();
+        match target {
+            ConditionTarget::CountryCode => t.to_ascii_uppercase(),
+            ConditionTarget::Currency => t.to_ascii_lowercase(),
+            ConditionTarget::EmailDomain => t.trim_start_matches('@').to_ascii_lowercase(),
+            _ => s.to_string(),
+        }
+    };
+    if !matches!(
+        target,
+        ConditionTarget::CountryCode | ConditionTarget::Currency | ConditionTarget::EmailDomain
+    ) {
+        return v;
+    }
+    match v {
+        Value::String(s) => Value::String(fix(&s)),
+        Value::Array(a) => Value::Array(
+            a.into_iter()
+                .map(|x| match x {
+                    Value::String(s) => Value::String(fix(&s)),
+                    other => other,
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn normalize_value(
     where_: &str,
     kind: TargetKind,
@@ -173,9 +215,8 @@ fn normalize_value(
                 Value::String(s) => s.trim().parse::<i64>().ok(),
                 _ => None,
             };
-            n.map(Value::from).ok_or_else(|| {
-                AppError::BadRequest(format!("{where_}: integer value required (got {raw})."))
-            })
+            n.map(Value::from)
+                .ok_or_else(|| AppError::BadRequest(format!("{where_}: enter a number.")))
         }
         // List operators on string OR string-set targets take an array of values.
         (TargetKind::String | TargetKind::StringList, In | NotIn) => {
@@ -303,6 +344,40 @@ mod tests {
         let body = one_group(vec![input("lifetime_spend", "gte", json!("5000"))]);
         let parsed = parse_rule_tree(body).unwrap();
         assert_eq!(parsed.rule_tree.groups[0].conditions[0].value, json!(5000));
+    }
+
+    #[test]
+    fn values_take_stripes_case() {
+        let v = |t: &str, op: &str, val: Value| {
+            let parsed = parse_rule_tree(one_group(vec![input(t, op, val)])).unwrap();
+            parsed.rule_tree.groups[0].conditions[0].value.clone()
+        };
+        assert_eq!(v("country_code", "eq", json!(" us ")), json!("US"));
+        assert_eq!(
+            v("country_code", "in", json!("us, gb")),
+            json!(["US", "GB"])
+        );
+        assert_eq!(v("currency", "eq", json!("USD")), json!("usd"));
+        assert_eq!(
+            v("email_domain", "eq", json!("@Acme.com")),
+            json!("acme.com")
+        );
+        // A regex is the admin's own pattern.
+        assert_eq!(v("email_domain", "regex", json!("^ACME")), json!("^ACME"));
+        // Everything else is left as typed.
+        assert_eq!(
+            v("subscribed_to_product", "eq", json!("prod_Pro")),
+            json!("prod_Pro")
+        );
+    }
+
+    #[test]
+    fn empty_number_says_so() {
+        let body = one_group(vec![input("lifetime_spend", "gte", json!(""))]);
+        match parse_rule_tree(body) {
+            Err(AppError::BadRequest(m)) => assert!(m.ends_with("enter a number."), "{m}"),
+            other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
+        }
     }
 
     #[test]

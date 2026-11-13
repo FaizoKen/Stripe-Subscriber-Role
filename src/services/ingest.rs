@@ -175,8 +175,9 @@ pub async fn upsert_subscription(
         "INSERT INTO stripe_subscriptions ( \
             account_ref, subscription_id, customer_id, discord_id, status, price_id, product_id, \
             unit_amount_cents, currency, interval, interval_count, quantity, cancel_at_period_end, \
-            current_period_end, trial_end, started_at, stripe_created_at, last_synced_at \
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now()) \
+            current_period_end, trial_end, started_at, stripe_created_at, \
+            price_ids, product_ids, period_amount_cents, last_synced_at \
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now()) \
          ON CONFLICT (account_ref, subscription_id) DO UPDATE SET \
             customer_id = EXCLUDED.customer_id, \
             discord_id = COALESCE(EXCLUDED.discord_id, stripe_subscriptions.discord_id), \
@@ -193,6 +194,9 @@ pub async fn upsert_subscription(
             trial_end = EXCLUDED.trial_end, \
             started_at = EXCLUDED.started_at, \
             stripe_created_at = COALESCE(EXCLUDED.stripe_created_at, stripe_subscriptions.stripe_created_at), \
+            price_ids = EXCLUDED.price_ids, \
+            product_ids = EXCLUDED.product_ids, \
+            period_amount_cents = EXCLUDED.period_amount_cents, \
             last_synced_at = now()",
     )
     .bind(account_ref)
@@ -212,6 +216,9 @@ pub async fn upsert_subscription(
     .bind(s.trial_end)
     .bind(s.started_at)
     .bind(s.created_at)
+    .bind(&s.price_ids)
+    .bind(&s.product_ids)
+    .bind(s.period_amount_cents)
     .execute(pool)
     .await?;
 
@@ -258,6 +265,129 @@ pub async fn set_customer_spend(
     Ok(did)
 }
 
+/// Set a customer's totals from a fresh per-customer recount (the charge
+/// webhooks). Unlike [set_customer_spend] it creates the row when the
+/// customer hasn't been seen yet, so the first payment of a brand-new buyer
+/// lands. Returns the customer's Discord ID if known.
+pub async fn set_customer_totals(
+    pool: &sqlx::PgPool,
+    account_ref: i64,
+    customer_id: &str,
+    amount_cents: i64,
+    payments: i32,
+) -> Result<Option<String>, AppError> {
+    let did = sqlx::query_scalar::<_, Option<String>>(
+        "INSERT INTO stripe_customers (account_ref, customer_id, lifetime_spend_cents, successful_payments) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (account_ref, customer_id) DO UPDATE SET \
+            lifetime_spend_cents = EXCLUDED.lifetime_spend_cents, \
+            successful_payments = EXCLUDED.successful_payments, \
+            last_synced_at = now() \
+         RETURNING discord_id",
+    )
+    .bind(account_ref)
+    .bind(customer_id)
+    .bind(amount_cents)
+    .bind(payments)
+    .fetch_one(pool)
+    .await?;
+    Ok(did)
+}
+
+/// Link a customer to a Discord ID the buyer's checkout carried (its
+/// `client_reference_id` or session metadata). An ID the customer already
+/// has — from its own metadata — wins; this only fills a gap. Creates the
+/// row if needed. Returns the customer's effective Discord ID.
+pub async fn link_customer(
+    pool: &sqlx::PgPool,
+    account_ref: i64,
+    customer_id: &str,
+    discord_id: &str,
+) -> Result<Option<String>, AppError> {
+    let did = sqlx::query_scalar::<_, Option<String>>(
+        "INSERT INTO stripe_customers (account_ref, customer_id, discord_id) VALUES ($1, $2, $3) \
+         ON CONFLICT (account_ref, customer_id) DO UPDATE SET \
+            discord_id = COALESCE(stripe_customers.discord_id, EXCLUDED.discord_id) \
+         RETURNING discord_id",
+    )
+    .bind(account_ref)
+    .bind(customer_id)
+    .bind(discord_id)
+    .fetch_one(pool)
+    .await?;
+    // Its subscriptions inherit the link, as they do from customer metadata.
+    if let Some(d) = &did {
+        sqlx::query(
+            "UPDATE stripe_subscriptions SET discord_id = $3 \
+             WHERE account_ref = $1 AND customer_id = $2 AND discord_id IS NULL",
+        )
+        .bind(account_ref)
+        .bind(customer_id)
+        .bind(d)
+        .execute(pool)
+        .await?;
+    }
+    Ok(did)
+}
+
+/// The Discord ID a completed Checkout Session carried: its metadata (the
+/// account's key, then the usual names), else its `client_reference_id`.
+pub fn checkout_discord_id(
+    metadata: &HashMap<String, String>,
+    client_reference_id: Option<&str>,
+    key: &str,
+) -> Option<String> {
+    resolve_from_meta(metadata, key).or_else(|| client_reference_id.and_then(normalize_discord_id))
+}
+
+/// Apply a completed checkout's link to the mirror rows it created, during
+/// an import (the webhook path does this live). Only fills rows that have no
+/// Discord ID yet. Returns the Discord ID it linked, if any row changed.
+pub async fn apply_checkout_link(
+    pool: &sqlx::PgPool,
+    account_ref: i64,
+    discord_id: &str,
+    customer_id: Option<&str>,
+    subscription_id: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    let mut changed = 0u64;
+    if let Some(sid) = subscription_id {
+        changed += sqlx::query(
+            "UPDATE stripe_subscriptions SET discord_id = $3 \
+             WHERE account_ref = $1 AND subscription_id = $2 AND discord_id IS NULL",
+        )
+        .bind(account_ref)
+        .bind(sid)
+        .bind(discord_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    if let Some(cid) = customer_id {
+        changed += sqlx::query(
+            "UPDATE stripe_customers SET discord_id = $3 \
+             WHERE account_ref = $1 AND customer_id = $2 AND discord_id IS NULL",
+        )
+        .bind(account_ref)
+        .bind(cid)
+        .bind(discord_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+        changed += sqlx::query(
+            "UPDATE stripe_subscriptions SET discord_id = $3 \
+             WHERE account_ref = $1 AND customer_id = $2 AND discord_id IS NULL",
+        )
+        .bind(account_ref)
+        .bind(cid)
+        .bind(discord_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    Ok((changed > 0).then(|| discord_id.to_string()))
+}
+
 /// Increment lifetime spend / payment count for a customer (charge.succeeded).
 /// Returns the customer's Discord ID if known, so the caller can recompute
 /// facts + re-evaluate roles.
@@ -292,4 +422,56 @@ pub async fn apply_successful_charge(
     .await?
     .flatten();
     Ok(discord_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn metadata_key_then_the_usual_names() {
+        let m = meta(&[("discordId", "123456789012345678")]);
+        assert_eq!(
+            resolve_from_meta(&m, "discord_user_id").as_deref(),
+            Some("123456789012345678")
+        );
+        let custom = meta(&[("member", "<@223456789012345678>")]);
+        assert_eq!(
+            resolve_from_meta(&custom, "member").as_deref(),
+            Some("223456789012345678")
+        );
+        assert_eq!(
+            resolve_from_meta(&meta(&[("discord", "not an id")]), "x"),
+            None
+        );
+    }
+
+    #[test]
+    fn checkout_reads_metadata_before_client_reference_id() {
+        let m = meta(&[("discord_user_id", "323456789012345678")]);
+        assert_eq!(
+            checkout_discord_id(&m, Some("423456789012345678"), "discord_user_id").as_deref(),
+            Some("323456789012345678")
+        );
+        assert_eq!(
+            checkout_discord_id(
+                &HashMap::new(),
+                Some("423456789012345678"),
+                "discord_user_id"
+            )
+            .as_deref(),
+            Some("423456789012345678")
+        );
+        assert_eq!(
+            checkout_discord_id(&HashMap::new(), Some("order-17"), "discord_user_id"),
+            None
+        );
+    }
 }
