@@ -30,7 +30,7 @@ pub async fn run(state: Arc<AppState>, mut shutdown: ShutdownGuard) {
         _ = shutdown.wait() => return,
     }
 
-    let mut interval = tokio::time::interval(TICK);
+    let mut interval = schedule();
     loop {
         gc(&state).await;
 
@@ -55,6 +55,17 @@ pub async fn run(state: Arc<AppState>, mut shutdown: ShutdownGuard) {
     }
 
     tracing::info!("Reconcile worker stopped");
+}
+
+/// The timer between passes: its first tick is one TICK away. A plain
+/// `tokio::time::interval` completes its first tick at once, which made the
+/// loop run a second full pass (every account re-imported from Stripe)
+/// straight after the first one at boot. A pass that overruns TICK delays
+/// the next one instead of firing a catch-up burst.
+fn schedule() -> tokio::time::Interval {
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + TICK, TICK);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval
 }
 
 async fn gc(state: &Arc<AppState>) {
@@ -233,4 +244,23 @@ async fn import_inner(
         "Stripe account imported"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pass that runs after INITIAL_DELAY is the only one at boot: the
+    /// next waits a full TICK.
+    #[tokio::test(start_paused = true)]
+    async fn next_pass_waits_a_full_tick() {
+        let mut interval = schedule();
+        let early = tokio::time::timeout(TICK - Duration::from_secs(1), interval.tick()).await;
+        assert!(
+            early.is_err(),
+            "the first tick must not complete before TICK"
+        );
+        let on_time = tokio::time::timeout(Duration::from_secs(2), interval.tick()).await;
+        assert!(on_time.is_ok(), "the first tick completes at TICK");
+    }
 }
