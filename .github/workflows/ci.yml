@@ -51,6 +51,12 @@ jobs:
     name: cargo-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # audit-check posts results as a check run, which needs checks:write.
+    # issues:write lets it open advisory issues on scheduled/main runs.
+    permissions:
+      checks: write
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
